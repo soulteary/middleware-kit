@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -37,22 +38,45 @@ func TestParseTimestamp(t *testing.T) {
 }
 
 func TestIsTimestampValid(t *testing.T) {
-	tests := []struct {
-		name           string
-		timestamp      int64
-		maxDrift       int64
-		expectedResult bool
-	}{
-		{"within drift", 0, 10, false}, // 0 is way in the past
-		{"at drift boundary", 0, 1000000000000, true},
-	}
+	t.Run("within drift", func(t *testing.T) {
+		result := isTimestampValid(0, 10) // 0 is way in the past
+		assert.False(t, result)
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isTimestampValid(tt.timestamp, tt.maxDrift)
-			assert.Equal(t, tt.expectedResult, result)
-		})
-	}
+	t.Run("at drift boundary", func(t *testing.T) {
+		result := isTimestampValid(0, 1000000000000)
+		assert.True(t, result)
+	})
+
+	t.Run("current timestamp valid", func(t *testing.T) {
+		now := time.Now().Unix()
+		result := isTimestampValid(now, 60)
+		assert.True(t, result)
+	})
+
+	t.Run("future timestamp within drift", func(t *testing.T) {
+		future := time.Now().Unix() + 30 // 30 seconds in future
+		result := isTimestampValid(future, 60)
+		assert.True(t, result)
+	})
+
+	t.Run("future timestamp outside drift", func(t *testing.T) {
+		future := time.Now().Unix() + 120 // 2 minutes in future
+		result := isTimestampValid(future, 60)
+		assert.False(t, result)
+	})
+
+	t.Run("past timestamp within drift", func(t *testing.T) {
+		past := time.Now().Unix() - 30 // 30 seconds ago
+		result := isTimestampValid(past, 60)
+		assert.True(t, result)
+	})
+
+	t.Run("past timestamp outside drift", func(t *testing.T) {
+		past := time.Now().Unix() - 120 // 2 minutes ago
+		result := isTimestampValid(past, 60)
+		assert.False(t, result)
+	})
 }
 
 func TestConstantTimeEqual(t *testing.T) {
@@ -101,6 +125,33 @@ func TestReadBody(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Nil(t, result)
 	})
+
+	t.Run("empty body", func(t *testing.T) {
+		req, _ := http.NewRequest("POST", "/", bytes.NewBufferString(""))
+
+		result, err := readBody(req)
+		assert.NoError(t, err)
+		assert.Empty(t, result)
+	})
+
+	t.Run("error reading body", func(t *testing.T) {
+		req, _ := http.NewRequest("POST", "/", &errorReader{})
+
+		result, err := readBody(req)
+		assert.Error(t, err)
+		assert.Nil(t, result)
+	})
+}
+
+// errorReader is a reader that always returns an error
+type errorReader struct{}
+
+func (e *errorReader) Read(p []byte) (n int, err error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func (e *errorReader) Close() error {
+	return nil
 }
 
 func TestTruncateString(t *testing.T) {

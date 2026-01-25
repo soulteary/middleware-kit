@@ -117,6 +117,101 @@ func TestSecurityHeadersStd(t *testing.T) {
 		assert.NotEmpty(t, rr.Header().Get("Content-Security-Policy"))
 		assert.Equal(t, "max-age=31536000; includeSubDomains", rr.Header().Get("Strict-Transport-Security"))
 	})
+
+	t.Run("all optional headers", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		cfg := SecurityHeadersConfig{
+			XContentTypeOptions:       "nosniff",
+			XFrameOptions:             "SAMEORIGIN",
+			XXSSProtection:            "1",
+			ReferrerPolicy:            "no-referrer",
+			ContentSecurityPolicy:     "default-src 'self'",
+			StrictTransportSecurity:   "max-age=3600",
+			PermissionsPolicy:         "camera=()",
+			CrossOriginOpenerPolicy:   "same-origin",
+			CrossOriginResourcePolicy: "same-site",
+			CrossOriginEmbedderPolicy: "require-corp",
+			CacheControl:              "no-cache",
+			Pragma:                    "no-cache",
+			CustomHeaders: map[string]string{
+				"X-Custom": "value",
+			},
+		}
+
+		middleware := SecurityHeadersStd(cfg)(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		rr := httptest.NewRecorder()
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "nosniff", rr.Header().Get("X-Content-Type-Options"))
+		assert.Equal(t, "SAMEORIGIN", rr.Header().Get("X-Frame-Options"))
+		assert.Equal(t, "1", rr.Header().Get("X-XSS-Protection"))
+		assert.Equal(t, "no-referrer", rr.Header().Get("Referrer-Policy"))
+		assert.Equal(t, "default-src 'self'", rr.Header().Get("Content-Security-Policy"))
+		assert.Equal(t, "max-age=3600", rr.Header().Get("Strict-Transport-Security"))
+		assert.Equal(t, "camera=()", rr.Header().Get("Permissions-Policy"))
+		assert.Equal(t, "same-origin", rr.Header().Get("Cross-Origin-Opener-Policy"))
+		assert.Equal(t, "same-site", rr.Header().Get("Cross-Origin-Resource-Policy"))
+		assert.Equal(t, "require-corp", rr.Header().Get("Cross-Origin-Embedder-Policy"))
+		assert.Equal(t, "no-cache", rr.Header().Get("Cache-Control"))
+		assert.Equal(t, "no-cache", rr.Header().Get("Pragma"))
+		assert.Equal(t, "value", rr.Header().Get("X-Custom"))
+	})
+
+	t.Run("empty config sets nothing", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+
+		middleware := SecurityHeadersStd(SecurityHeadersConfig{})(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		rr := httptest.NewRecorder()
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Empty(t, rr.Header().Get("X-Content-Type-Options"))
+	})
+}
+
+func TestSecurityHeaders_FiberAllHeaders(t *testing.T) {
+	t.Run("all optional headers", func(t *testing.T) {
+		cfg := SecurityHeadersConfig{
+			XContentTypeOptions:       "nosniff",
+			XFrameOptions:             "SAMEORIGIN",
+			XXSSProtection:            "1",
+			ReferrerPolicy:            "no-referrer",
+			ContentSecurityPolicy:     "default-src 'self'",
+			StrictTransportSecurity:   "max-age=3600",
+			PermissionsPolicy:         "camera=()",
+			CrossOriginOpenerPolicy:   "same-origin",
+			CrossOriginResourcePolicy: "same-site",
+			CrossOriginEmbedderPolicy: "require-corp",
+			CacheControl:              "no-cache",
+			Pragma:                    "no-cache",
+		}
+
+		app := fiber.New()
+		app.Use(SecurityHeaders(cfg))
+		app.Get("/", func(c *fiber.Ctx) error {
+			return c.SendString("OK")
+		})
+
+		req := httptest.NewRequest("GET", "/", nil)
+		resp, err := app.Test(req)
+		assert.NoError(t, err)
+
+		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
+		assert.Equal(t, "SAMEORIGIN", resp.Header.Get("X-Frame-Options"))
+		assert.Equal(t, "require-corp", resp.Header.Get("Cross-Origin-Embedder-Policy"))
+		assert.Equal(t, "no-cache", resp.Header.Get("Cache-Control"))
+		assert.Equal(t, "no-cache", resp.Header.Get("Pragma"))
+	})
 }
 
 func TestNoCacheHeaders_Fiber(t *testing.T) {

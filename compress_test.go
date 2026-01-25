@@ -132,3 +132,192 @@ func TestDefaultCompressConfig(t *testing.T) {
 	assert.Contains(t, cfg.ContentTypes, "application/json")
 	assert.Contains(t, cfg.ContentTypes, "text/html")
 }
+
+func TestCompressStd_WriteHeader(t *testing.T) {
+	largeBody := strings.Repeat("Hello, World! ", 1000)
+
+	t.Run("explicit WriteHeader before Write with buffered data", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			// Write some data first (will be buffered)
+			_, _ = w.Write([]byte("buffered"))
+			// Then explicitly call WriteHeader
+			w.WriteHeader(http.StatusCreated)
+			// Write more data
+			_, _ = w.Write([]byte(largeBody))
+		})
+
+		middleware := CompressStd(CompressConfig{
+			MinSize: 100,
+		})(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		// The response should complete without error
+		assert.NotNil(t, rr.Body)
+	})
+
+	t.Run("WriteHeader with empty buffer", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		middleware := CompressStd(DefaultCompressConfig())(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNoContent, rr.Code)
+	})
+}
+
+func TestCompressStd_GzipWriter(t *testing.T) {
+	largeBody := strings.Repeat("Hello, World! ", 1000)
+
+	t.Run("multiple writes with gzip enabled", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			// First write triggers buffering
+			_, _ = w.Write([]byte(largeBody[:500]))
+			// Second write exceeds minSize, triggers gzip
+			_, _ = w.Write([]byte(largeBody[500:]))
+			// Third write goes directly to gzip writer
+			_, _ = w.Write([]byte(" additional data"))
+		})
+
+		middleware := CompressStd(CompressConfig{
+			MinSize: 100,
+		})(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
+	})
+
+	t.Run("content type with charset", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(largeBody))
+		})
+
+		middleware := CompressStd(DefaultCompressConfig())(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
+	})
+
+	t.Run("unsupported content type not compressed", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte(largeBody))
+		})
+
+		middleware := CompressStd(DefaultCompressConfig())(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		// Image content should not be gzip encoded
+		assert.Empty(t, rr.Header().Get("Content-Encoding"))
+	})
+
+	t.Run("no content type defaults to text/html", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// No content type set
+			_, _ = w.Write([]byte(largeBody))
+		})
+
+		middleware := CompressStd(DefaultCompressConfig())(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		// Default text/html should be compressed
+		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
+	})
+
+	t.Run("empty content types config compresses all", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write([]byte(largeBody))
+		})
+
+		middleware := CompressStd(CompressConfig{
+			MinSize:      100,
+			ContentTypes: []string{}, // Empty means compress all
+		})(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
+	})
+
+	t.Run("Close with small buffer not gzipped", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			// Write less than minSize, so it won't be gzipped
+			_, _ = w.Write([]byte("small"))
+		})
+
+		middleware := CompressStd(CompressConfig{
+			MinSize: 1000,
+		})(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		// Should not be compressed
+		assert.Empty(t, rr.Header().Get("Content-Encoding"))
+		assert.Equal(t, "small", rr.Body.String())
+	})
+
+	t.Run("default MinSize when zero", func(t *testing.T) {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(largeBody))
+		})
+
+		middleware := CompressStd(CompressConfig{
+			MinSize: 0, // Should default to 1024
+		})(handler)
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		middleware.ServeHTTP(rr, req)
+
+		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
+	})
+}
