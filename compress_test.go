@@ -17,7 +17,7 @@ func TestCompressStd(t *testing.T) {
 	t.Run("compresses large response", func(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte(largeBody))
+			_, _ = w.Write([]byte(largeBody))
 		})
 
 		middleware := CompressStd(DefaultCompressConfig())(handler)
@@ -35,7 +35,7 @@ func TestCompressStd(t *testing.T) {
 		// Verify it's actually gzip compressed
 		reader, err := gzip.NewReader(rr.Body)
 		assert.NoError(t, err)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		decompressed, err := io.ReadAll(reader)
 		assert.NoError(t, err)
@@ -46,7 +46,7 @@ func TestCompressStd(t *testing.T) {
 		smallBody := "Hello"
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte(smallBody))
+			_, _ = w.Write([]byte(smallBody))
 		})
 
 		middleware := CompressStd(CompressConfig{
@@ -67,7 +67,7 @@ func TestCompressStd(t *testing.T) {
 	t.Run("skips if client does not accept gzip", func(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte(largeBody))
+			_, _ = w.Write([]byte(largeBody))
 		})
 
 		middleware := CompressStd(DefaultCompressConfig())(handler)
@@ -86,7 +86,7 @@ func TestCompressStd(t *testing.T) {
 	t.Run("skips paths in skip list", func(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte(largeBody))
+			_, _ = w.Write([]byte(largeBody))
 		})
 
 		middleware := CompressStd(CompressConfig{
@@ -108,7 +108,7 @@ func TestCompressStd(t *testing.T) {
 	t.Run("sets Vary header", func(t *testing.T) {
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/plain")
-			w.Write([]byte(largeBody))
+			_, _ = w.Write([]byte(largeBody))
 		})
 
 		middleware := CompressStd(DefaultCompressConfig())(handler)
