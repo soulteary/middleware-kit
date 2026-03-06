@@ -163,7 +163,7 @@ func RequestLogging(cfg LoggingConfig) fiber.Handler {
 		// Add headers if enabled
 		if cfg.LogHeaders {
 			headers := make(map[string]string)
-			c.Request().Header.VisitAll(func(key, value []byte) {
+			for key, value := range c.Request().Header.All() {
 				headerName := string(key)
 				// Use lowercase for case-insensitive comparison
 				if sensitiveHeaderMap[strings.ToLower(headerName)] {
@@ -171,7 +171,7 @@ func RequestLogging(cfg LoggingConfig) fiber.Handler {
 				} else {
 					headers[headerName] = string(value)
 				}
-			})
+			}
 			event = event.Interface("headers", headers)
 		}
 

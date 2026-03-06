@@ -330,7 +330,7 @@ middleware-kit/
 
 ## 依赖要求
 
-- Go 1.25 或更高版本
+- Go 1.26 或更高版本
 - github.com/gofiber/fiber/v2 v2.52.6+（Fiber 中间件）
 - github.com/rs/zerolog v1.34.0+（日志）
 

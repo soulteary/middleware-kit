@@ -330,7 +330,7 @@ middleware-kit/
 
 ## Requirements
 
-- Go 1.25 or later
+- Go 1.26 or later
 - github.com/gofiber/fiber/v2 v2.52.6+ (for Fiber middleware)
 - github.com/rs/zerolog v1.34.0+ (for logging)
 
