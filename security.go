@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // SecurityHeadersConfig configures security headers middleware.
@@ -95,7 +95,7 @@ func StrictSecurityHeadersConfig() SecurityHeadersConfig {
 
 // SecurityHeaders creates a Fiber middleware that adds security headers.
 func SecurityHeaders(cfg SecurityHeadersConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Set standard security headers
 		if cfg.XContentTypeOptions != "" {
 			c.Set("X-Content-Type-Options", cfg.XContentTypeOptions)
@@ -197,7 +197,7 @@ func SecurityHeadersStd(cfg SecurityHeadersConfig) func(http.Handler) http.Handl
 
 // NoCacheHeaders creates a middleware that sets cache-control headers to prevent caching.
 func NoCacheHeaders() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
 		c.Set("Pragma", "no-cache")
 		c.Set("Expires", "0")

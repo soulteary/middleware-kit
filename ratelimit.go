@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -249,10 +249,10 @@ type RateLimitConfig struct {
 
 	// KeyFunc extracts the key to use for rate limiting from the request.
 	// Default: uses client IP
-	KeyFunc func(c *fiber.Ctx) string
+	KeyFunc func(c fiber.Ctx) string
 
 	// ErrorHandler is called when the rate limit is exceeded.
-	ErrorHandler func(c *fiber.Ctx) error
+	ErrorHandler func(c fiber.Ctx) error
 
 	// SkipPaths is a list of paths to skip rate limiting.
 	SkipPaths []string
@@ -279,7 +279,7 @@ func RateLimit(cfg RateLimitConfig) fiber.Handler {
 		skipPathMap[p] = true
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Skip if path is in skip list
 		if skipPathMap[c.Path()] {
 			return c.Next()

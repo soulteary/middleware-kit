@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -20,7 +20,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		app.Use(RequestLogging(LoggingConfig{
 			Logger: &logger,
 		}))
-		app.Get("/test", func(c *fiber.Ctx) error {
+		app.Get("/test", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -46,10 +46,10 @@ func TestRequestLogging_Fiber(t *testing.T) {
 			Logger:    &logger,
 			SkipPaths: []string{"/health"},
 		}))
-		app.Get("/health", func(c *fiber.Ctx) error {
+		app.Get("/health", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
-		app.Get("/api", func(c *fiber.Ctx) error {
+		app.Get("/api", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -75,7 +75,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 			Logger:         &logger,
 			IncludeLatency: true,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -92,7 +92,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		app.Use(RequestLogging(LoggingConfig{
 			Logger: nil, // nil logger
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -111,7 +111,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 			Logger:     &logger,
 			LogHeaders: true,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -134,7 +134,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 			LogHeaders:       true,
 			SensitiveHeaders: []string{"Authorization", "X-API-Key"},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -159,7 +159,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 			Logger:         &logger,
 			LogRequestBody: true,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -182,7 +182,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 			LogRequestBody: true,
 			MaxBodyLogSize: 10, // Very small limit
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -203,13 +203,13 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		app := fiber.New()
 		app.Use(RequestLogging(LoggingConfig{
 			Logger: &logger,
-			CustomFields: func(c *fiber.Ctx) map[string]interface{} {
+			CustomFields: func(c fiber.Ctx) map[string]interface{} {
 				return map[string]interface{}{
 					"custom_field": "custom_value",
 				}
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -229,7 +229,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		app.Use(RequestLogging(LoggingConfig{
 			Logger: &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -249,7 +249,7 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		app.Use(RequestLogging(LoggingConfig{
 			Logger: &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return fiber.ErrInternalServerError
 		})
 

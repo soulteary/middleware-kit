@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -52,7 +52,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 		app.Use(HMACAuth(HMACConfig{
 			Secret: secret,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -77,7 +77,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 		app.Use(HMACAuth(HMACConfig{
 			Secret: secret,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -100,7 +100,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 		app.Use(HMACAuth(HMACConfig{
 			Secret: secret,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -116,7 +116,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 		app.Use(HMACAuth(HMACConfig{
 			Secret: secret,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -134,7 +134,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 			Secret:       secret,
 			MaxTimeDrift: 5 * time.Minute,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -159,7 +159,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 		app.Use(HMACAuth(HMACConfig{
 			Secret: secret,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -184,7 +184,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 				return keys[keyID]
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -215,7 +215,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 				return keys[keyID]
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -235,7 +235,7 @@ func TestHMACAuth_Fiber(t *testing.T) {
 			Secret:           "",
 			AllowEmptySecret: true,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -581,7 +581,7 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 			Secret: "test-secret",
 			Logger: &logger,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -610,7 +610,7 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 			Logger:             &logger,
 			TrustedProxyConfig: DefaultTrustedProxyConfig(),
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -635,7 +635,7 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 			AllowEmptySecret: true,
 			Logger:           &logger,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -653,11 +653,11 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 		app := fiber.New()
 		app.Use(HMACAuth(HMACConfig{
 			Secret: "test-secret",
-			ErrorHandler: func(c *fiber.Ctx, err error) error {
+			ErrorHandler: func(c fiber.Ctx, err error) error {
 				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "custom"})
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -676,11 +676,11 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 		app := fiber.New()
 		app.Use(HMACAuth(HMACConfig{
 			Secret: "test-secret",
-			SuccessHandler: func(c *fiber.Ctx) {
+			SuccessHandler: func(c fiber.Ctx) {
 				successCalled = true
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -705,7 +705,7 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 			Secret:           "",
 			AllowEmptySecret: false,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -728,7 +728,7 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 			MaxTimeDrift: 60 * time.Second,
 			Logger:       &logger,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -753,11 +753,11 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 		app := fiber.New()
 		app.Use(HMACAuth(HMACConfig{
 			Secret: "test-secret",
-			SuccessHandler: func(c *fiber.Ctx) {
+			SuccessHandler: func(c fiber.Ctx) {
 				successCalled = true
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -782,7 +782,7 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 				return "" // Always return empty
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 

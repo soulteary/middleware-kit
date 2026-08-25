@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -24,7 +24,7 @@ type AuthConfig struct {
 	AllowNoAuth bool
 
 	// ErrorHandler is called when all authentication methods fail.
-	ErrorHandler func(c *fiber.Ctx, err error) error
+	ErrorHandler func(c fiber.Ctx, err error) error
 
 	// Logger for logging authentication events.
 	Logger *zerolog.Logger
@@ -37,7 +37,7 @@ type AuthConfig struct {
 // Authentication methods are tried in order: mTLS > HMAC > API Key.
 // The first successful authentication allows the request through.
 func CombinedAuth(cfg AuthConfig) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Check if any authentication method is configured
 		hasMTLS := cfg.MTLSConfig != nil
 		hasHMAC := cfg.HMACConfig != nil && (cfg.HMACConfig.Secret != "" || cfg.HMACConfig.KeyProvider != nil)
@@ -55,7 +55,7 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 
 		// Try mTLS first (if TLS connection with verified client certificate)
 		if hasMTLS && c.Protocol() == "https" {
-			tlsConn := c.Context().TLSConnectionState()
+			tlsConn := c.RequestCtx().TLSConnectionState()
 			if tlsConn != nil && len(tlsConn.PeerCertificates) > 0 {
 				// Client certificate is present and verified (by TLS layer)
 				if cfg.Logger != nil {
@@ -115,7 +115,7 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 }
 
 // validateHMAC performs inline HMAC validation without middleware chaining.
-func validateHMAC(c *fiber.Ctx, cfg HMACConfig) bool {
+func validateHMAC(c fiber.Ctx, cfg HMACConfig) bool {
 	signature := c.Get(getHeaderOrDefault(cfg.SignatureHeader, "X-Signature"))
 	timestamp := c.Get(getHeaderOrDefault(cfg.TimestampHeader, "X-Timestamp"))
 	keyID := c.Get(getHeaderOrDefault(cfg.KeyIDHeader, "X-Key-Id"))
@@ -163,7 +163,7 @@ func validateHMAC(c *fiber.Ctx, cfg HMACConfig) bool {
 }
 
 // validateAPIKey performs inline API key validation.
-func validateAPIKey(c *fiber.Ctx, cfg APIKeyConfig) bool {
+func validateAPIKey(c fiber.Ctx, cfg APIKeyConfig) bool {
 	headerName := cfg.HeaderName
 	if headerName == "" {
 		headerName = "X-API-Key"
@@ -194,7 +194,7 @@ func validateAPIKey(c *fiber.Ctx, cfg APIKeyConfig) bool {
 }
 
 // handleCombinedAuthError handles combined auth errors.
-func handleCombinedAuthError(c *fiber.Ctx, cfg AuthConfig, err error) error {
+func handleCombinedAuthError(c fiber.Ctx, cfg AuthConfig, err error) error {
 	if cfg.ErrorHandler != nil {
 		return cfg.ErrorHandler(c, err)
 	}

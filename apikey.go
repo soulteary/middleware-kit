@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -36,11 +36,11 @@ type APIKeyConfig struct {
 
 	// ErrorHandler is called when authentication fails.
 	// If nil, returns 401 Unauthorized with a generic message.
-	ErrorHandler func(c *fiber.Ctx, err error) error
+	ErrorHandler func(c fiber.Ctx, err error) error
 
 	// SuccessHandler is called when authentication succeeds.
 	// Useful for setting context values or logging.
-	SuccessHandler func(c *fiber.Ctx)
+	SuccessHandler func(c fiber.Ctx)
 
 	// Logger for logging authentication events.
 	// If nil, no logging is performed.
@@ -64,7 +64,7 @@ func APIKeyAuth(cfg APIKeyConfig) fiber.Handler {
 		cfg.HeaderName = "X-API-Key"
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Check if API key is configured
 		if cfg.APIKey == "" {
 			if cfg.AllowEmptyKey {
@@ -207,7 +207,7 @@ func APIKeyAuthStd(cfg APIKeyConfig) func(http.Handler) http.Handler {
 }
 
 // handleAPIKeyError handles API key authentication errors.
-func handleAPIKeyError(c *fiber.Ctx, cfg APIKeyConfig, err error) error {
+func handleAPIKeyError(c fiber.Ctx, cfg APIKeyConfig, err error) error {
 	if cfg.ErrorHandler != nil {
 		return cfg.ErrorHandler(c, err)
 	}

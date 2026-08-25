@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -204,7 +204,7 @@ func TestRateLimitMiddleware_Fiber(t *testing.T) {
 		app.Use(RateLimit(RateLimitConfig{
 			Limiter: limiter,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -227,7 +227,7 @@ func TestRateLimitMiddleware_Fiber(t *testing.T) {
 		app.Use(RateLimit(RateLimitConfig{
 			Limiter: limiter,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -258,10 +258,10 @@ func TestRateLimitMiddleware_Fiber(t *testing.T) {
 			Limiter:   limiter,
 			SkipPaths: []string{"/health"},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
-		app.Get("/health", func(c *fiber.Ctx) error {
+		app.Get("/health", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -284,13 +284,13 @@ func TestRateLimitMiddleware_Fiber(t *testing.T) {
 		app := fiber.New()
 		app.Use(RateLimit(RateLimitConfig{
 			Limiter: limiter,
-			ErrorHandler: func(c *fiber.Ctx) error {
+			ErrorHandler: func(c fiber.Ctx) error {
 				return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 					"custom": "rate_limited",
 				})
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -317,11 +317,11 @@ func TestRateLimitMiddleware_Fiber(t *testing.T) {
 		app := fiber.New()
 		app.Use(RateLimit(RateLimitConfig{
 			Limiter: limiter,
-			KeyFunc: func(c *fiber.Ctx) string {
+			KeyFunc: func(c fiber.Ctx) string {
 				return c.Get("X-User-ID")
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -551,7 +551,7 @@ func TestRateLimitMiddleware_FiberWithLogger(t *testing.T) {
 			Limiter: limiter,
 			Logger:  &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -584,7 +584,7 @@ func TestRateLimitMiddleware_FiberWithLogger(t *testing.T) {
 				limitReachedKey = key
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -604,7 +604,7 @@ func TestRateLimitMiddleware_FiberWithLogger(t *testing.T) {
 		app.Use(RateLimit(RateLimitConfig{
 			Limiter: nil,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 

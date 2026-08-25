@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -18,7 +18,7 @@ func TestCombinedAuth(t *testing.T) {
 		app.Use(CombinedAuth(AuthConfig{
 			AllowNoAuth: true,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -33,7 +33,7 @@ func TestCombinedAuth(t *testing.T) {
 		app.Use(CombinedAuth(AuthConfig{
 			AllowNoAuth: false,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -50,7 +50,7 @@ func TestCombinedAuth(t *testing.T) {
 				APIKey: "test-api-key",
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -68,7 +68,7 @@ func TestCombinedAuth(t *testing.T) {
 				APIKey: "test-api-key",
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -87,7 +87,7 @@ func TestCombinedAuth(t *testing.T) {
 				Secret: secret,
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -114,7 +114,7 @@ func TestCombinedAuth(t *testing.T) {
 				APIKey: "test-api-key",
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -133,13 +133,13 @@ func TestCombinedAuth(t *testing.T) {
 			APIKeyConfig: &APIKeyConfig{
 				APIKey: "test-api-key",
 			},
-			ErrorHandler: func(c *fiber.Ctx, err error) error {
+			ErrorHandler: func(c fiber.Ctx, err error) error {
 				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 					"custom": "error",
 				})
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -161,7 +161,7 @@ func TestCombinedAuth(t *testing.T) {
 			},
 			Logger: &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -181,7 +181,7 @@ func TestCombinedAuth(t *testing.T) {
 			AllowNoAuth: true,
 			Logger:      &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -204,7 +204,7 @@ func TestCombinedAuth(t *testing.T) {
 			Logger:             &logger,
 			TrustedProxyConfig: DefaultTrustedProxyConfig(),
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -232,7 +232,7 @@ func TestCombinedAuth(t *testing.T) {
 			Logger:             &logger,
 			TrustedProxyConfig: DefaultTrustedProxyConfig(),
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -248,7 +248,7 @@ func TestValidateAPIKey(t *testing.T) {
 	t.Run("valid API key in header", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey: "test-key",
 			})
@@ -264,7 +264,7 @@ func TestValidateAPIKey(t *testing.T) {
 	t.Run("valid API key in Authorization header", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey:     "test-key",
 				AuthScheme: "Bearer",
@@ -281,7 +281,7 @@ func TestValidateAPIKey(t *testing.T) {
 	t.Run("valid API key in query parameter", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey:         "test-key",
 				QueryParamName: "api_key",
@@ -297,7 +297,7 @@ func TestValidateAPIKey(t *testing.T) {
 	t.Run("missing API key", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey: "test-key",
 			})
@@ -312,7 +312,7 @@ func TestValidateAPIKey(t *testing.T) {
 	t.Run("invalid API key", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey: "test-key",
 			})
@@ -332,7 +332,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("valid HMAC", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret: secret,
 			})
@@ -354,7 +354,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("missing signature", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret: secret,
 			})
@@ -370,7 +370,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("missing timestamp", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret: secret,
 			})
@@ -386,7 +386,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("no secret configured", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret: "",
 			})
@@ -403,7 +403,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("with KeyProvider", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				KeyProvider: func(keyID string) string {
 					if keyID == "key1" {
@@ -431,7 +431,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("invalid timestamp format", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret: secret,
 			})
@@ -448,7 +448,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("expired timestamp", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret:       secret,
 				MaxTimeDrift: 60 * time.Second,
@@ -470,7 +470,7 @@ func TestValidateHMAC(t *testing.T) {
 	t.Run("invalid signature", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret: secret,
 			})
@@ -502,7 +502,7 @@ func TestGetHeaderOrDefault(t *testing.T) {
 func TestHandleCombinedAuthError(t *testing.T) {
 	t.Run("default error response", func(t *testing.T) {
 		app := fiber.New()
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return handleCombinedAuthError(c, AuthConfig{}, ErrUnauthorized)
 		})
 
@@ -514,9 +514,9 @@ func TestHandleCombinedAuthError(t *testing.T) {
 
 	t.Run("custom error handler", func(t *testing.T) {
 		app := fiber.New()
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return handleCombinedAuthError(c, AuthConfig{
-				ErrorHandler: func(c *fiber.Ctx, err error) error {
+				ErrorHandler: func(c fiber.Ctx, err error) error {
 					return c.Status(fiber.StatusForbidden).SendString("Custom error")
 				},
 			}, ErrUnauthorized)
@@ -533,7 +533,7 @@ func TestValidateAPIKey_AuthScheme(t *testing.T) {
 	t.Run("short Authorization header", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey:     "test-key",
 				AuthScheme: "Bearer",
@@ -551,7 +551,7 @@ func TestValidateAPIKey_AuthScheme(t *testing.T) {
 	t.Run("Authorization header with wrong scheme", func(t *testing.T) {
 		app := fiber.New()
 		var result bool
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			result = validateAPIKey(c, APIKeyConfig{
 				APIKey:     "test-key",
 				AuthScheme: "Bearer",
@@ -577,7 +577,7 @@ func TestCombinedAuth_MTLSConfig(t *testing.T) {
 				APIKey: "test-api-key",
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -601,7 +601,7 @@ func TestCombinedAuth_MTLSConfig(t *testing.T) {
 				},
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -627,7 +627,7 @@ func TestValidateHMAC_CustomSignatureFunc(t *testing.T) {
 
 		app := fiber.New()
 		var result bool
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			result = validateHMAC(c, HMACConfig{
 				Secret:        "test-secret",
 				SignatureFunc: customSigner,
@@ -658,7 +658,7 @@ func TestCombinedAuth_HMACWithNoHeaders(t *testing.T) {
 				APIKey: "test-api-key",
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -677,7 +677,7 @@ func TestCombinedAuth_HMACWithNoHeaders(t *testing.T) {
 				Secret: "test-secret",
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -697,7 +697,7 @@ func TestCombinedAuth_MTLSOnly(t *testing.T) {
 				RequireCert: false,
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
