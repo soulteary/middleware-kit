@@ -1,6 +1,6 @@
 # middleware-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit/v2)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/middleware-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/middleware-kit)
@@ -39,7 +39,7 @@ A comprehensive HTTP middleware toolkit for Go services. This package provides a
 ## Installation
 
 ```bash
-go get github.com/soulteary/middleware-kit
+go get github.com/soulteary/middleware-kit/v2
 ```
 
 ## Usage
@@ -48,8 +48,8 @@ go get github.com/soulteary/middleware-kit
 
 ```go
 import (
-    "github.com/gofiber/fiber/v2"
-    middleware "github.com/soulteary/middleware-kit"
+    "github.com/gofiber/fiber/v3"
+    middleware "github.com/soulteary/middleware-kit/v2"
 )
 
 app := fiber.New()
@@ -161,7 +161,7 @@ limiter.AddToWhitelist("10.0.0.1")
 // Custom key function (e.g., rate limit by user ID)
 app.Use(middleware.RateLimit(middleware.RateLimitConfig{
     Limiter: limiter,
-    KeyFunc: func(c *fiber.Ctx) string {
+    KeyFunc: func(c fiber.Ctx) string {
         return c.Get("X-User-ID")
     },
 }))
@@ -240,7 +240,7 @@ trustedProxies := middleware.NewTrustedProxyConfig([]string{
 })
 
 // In Fiber handler
-app.Get("/", func(c *fiber.Ctx) error {
+app.Get("/", func(c fiber.Ctx) error {
     clientIP := middleware.GetClientIPFiber(c, trustedProxies)
     return c.SendString("Your IP: " + clientIP)
 })
@@ -271,7 +271,7 @@ All middleware support both Fiber and standard net/http:
 ```go
 import (
     "net/http"
-    middleware "github.com/soulteary/middleware-kit"
+    middleware "github.com/soulteary/middleware-kit/v2"
 )
 
 // API Key authentication
@@ -331,8 +331,10 @@ middleware-kit/
 ## Requirements
 
 - Go 1.26 or later
-- github.com/gofiber/fiber/v2 v2.52.6+ (for Fiber middleware)
+- github.com/gofiber/fiber/v3 v3.4.0+ (for Fiber middleware)
 - github.com/rs/zerolog v1.34.0+ (for logging)
+
+This v2 module line targets Fiber v3. Applications that still use Fiber v2 should remain on `github.com/soulteary/middleware-kit` v1.
 
 ## Test Coverage
 

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -121,12 +121,12 @@ func TestGetClientIPFiber(t *testing.T) {
 		app := fiber.New()
 		var capturedIP string
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, nil)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -145,12 +145,12 @@ func TestGetClientIPFiber(t *testing.T) {
 		// Use trust all proxies for testing
 		cfg := &TrustedProxyConfig{TrustAllProxies: true}
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, cfg)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -169,12 +169,12 @@ func TestGetClientIPFiber(t *testing.T) {
 
 		cfg := &TrustedProxyConfig{TrustAllProxies: true}
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, cfg)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -193,12 +193,12 @@ func TestGetClientIPFiber(t *testing.T) {
 
 		cfg := &TrustedProxyConfig{TrustAllProxies: true}
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, cfg)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -216,12 +216,12 @@ func TestGetClientIPFiber(t *testing.T) {
 		app := fiber.New()
 		var capturedIP string
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, nil)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -238,12 +238,12 @@ func TestGetClientIPFiber(t *testing.T) {
 
 		cfg := &TrustedProxyConfig{TrustAllProxies: true}
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, cfg)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -263,12 +263,12 @@ func TestGetClientIPFiber(t *testing.T) {
 
 		cfg := &TrustedProxyConfig{TrustAllProxies: true}
 
-		app.Use(func(c *fiber.Ctx) error {
+		app.Use(func(c fiber.Ctx) error {
 			capturedIP = GetClientIPFiber(c, cfg)
 			return c.Next()
 		})
 
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 

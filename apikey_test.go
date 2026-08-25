@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -27,7 +27,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 		app.Use(APIKeyAuth(APIKeyConfig{
 			APIKey: "test-api-key",
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -44,7 +44,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 		app.Use(APIKeyAuth(APIKeyConfig{
 			APIKey: "test-api-key",
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -61,7 +61,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 		app.Use(APIKeyAuth(APIKeyConfig{
 			APIKey: "test-api-key",
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -78,7 +78,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 			APIKey:     "test-api-key",
 			AuthScheme: "Bearer",
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -96,7 +96,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 			APIKey:         "test-api-key",
 			QueryParamName: "api_key",
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -113,7 +113,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 			APIKey:     "test-api-key",
 			HeaderName: "X-Custom-Key",
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -131,7 +131,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 			APIKey:        "",
 			AllowEmptyKey: true,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -148,7 +148,7 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 			APIKey:        "",
 			AllowEmptyKey: false,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -163,13 +163,13 @@ func TestAPIKeyAuth_Fiber(t *testing.T) {
 		app := fiber.New()
 		app.Use(APIKeyAuth(APIKeyConfig{
 			APIKey: "test-api-key",
-			ErrorHandler: func(c *fiber.Ctx, err error) error {
+			ErrorHandler: func(c fiber.Ctx, err error) error {
 				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 					"custom": "error",
 				})
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -438,7 +438,7 @@ func TestAPIKeyAuth_FiberWithLogger(t *testing.T) {
 			Logger:             &logger,
 			TrustedProxyConfig: DefaultTrustedProxyConfig(),
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -460,7 +460,7 @@ func TestAPIKeyAuth_FiberWithLogger(t *testing.T) {
 			APIKey: "test-api-key",
 			Logger: &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -479,11 +479,11 @@ func TestAPIKeyAuth_FiberWithLogger(t *testing.T) {
 		app := fiber.New()
 		app.Use(APIKeyAuth(APIKeyConfig{
 			APIKey: "test-api-key",
-			SuccessHandler: func(c *fiber.Ctx) {
+			SuccessHandler: func(c fiber.Ctx) {
 				successCalled = true
 			},
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -506,7 +506,7 @@ func TestAPIKeyAuth_FiberWithLogger(t *testing.T) {
 			AllowEmptyKey: true,
 			Logger:        &logger,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -524,7 +524,7 @@ func TestAPIKeyAuth_FiberWithLogger(t *testing.T) {
 			APIKey:     "test-api-key",
 			HeaderName: "", // Should default to X-API-Key
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 

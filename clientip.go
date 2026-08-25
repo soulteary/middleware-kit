@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // TrustedProxyConfig configures trusted proxy settings for client IP detection.
@@ -170,7 +170,7 @@ func GetClientIP(r *http.Request, trustedConfig *TrustedProxyConfig) string {
 }
 
 // GetClientIPFiber extracts the real client IP address from a Fiber context.
-func GetClientIPFiber(c *fiber.Ctx, trustedConfig *TrustedProxyConfig) string {
+func GetClientIPFiber(c fiber.Ctx, trustedConfig *TrustedProxyConfig) string {
 	if trustedConfig == nil {
 		trustedConfig = DefaultTrustedProxyConfig()
 	}

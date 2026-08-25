@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -58,7 +58,7 @@ type LoggingConfig struct {
 	TrustedProxyConfig *TrustedProxyConfig
 
 	// CustomFields adds custom fields to each log entry.
-	CustomFields func(c *fiber.Ctx) map[string]interface{}
+	CustomFields func(c fiber.Ctx) map[string]interface{}
 }
 
 // DefaultLoggingConfig returns the default logging configuration.
@@ -82,7 +82,7 @@ func DefaultLoggingConfig() LoggingConfig {
 func RequestLogging(cfg LoggingConfig) fiber.Handler {
 	if cfg.Logger == nil {
 		// No-op middleware if no logger is provided
-		return func(c *fiber.Ctx) error {
+		return func(c fiber.Ctx) error {
 			return c.Next()
 		}
 	}
@@ -105,7 +105,7 @@ func RequestLogging(cfg LoggingConfig) fiber.Handler {
 		sensitiveHeaderMap[strings.ToLower(h)] = true
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Skip if path is in skip list
 		if skipPathMap[c.Path()] {
 			return c.Next()

@@ -1,7 +1,7 @@
 # middleware-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit)
-[![Go Report Card](https://goreportcard.com/badge/github.com/soulteary/middleware-kit)](https://goreportcard.com/report/github.com/soulteary/middleware-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit/v2)
+[![Go Report Card](https://goreportcard.com/badge/github.com/soulteary/middleware-kit/v2)](https://goreportcard.com/report/github.com/soulteary/middleware-kit/v2)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/middleware-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/middleware-kit)
 
@@ -39,7 +39,7 @@
 ## 安装
 
 ```bash
-go get github.com/soulteary/middleware-kit
+go get github.com/soulteary/middleware-kit/v2
 ```
 
 ## 使用方法
@@ -48,8 +48,8 @@ go get github.com/soulteary/middleware-kit
 
 ```go
 import (
-    "github.com/gofiber/fiber/v2"
-    middleware "github.com/soulteary/middleware-kit"
+    "github.com/gofiber/fiber/v3"
+    middleware "github.com/soulteary/middleware-kit/v2"
 )
 
 app := fiber.New()
@@ -161,7 +161,7 @@ limiter.AddToWhitelist("10.0.0.1")
 // 自定义 Key 函数（例如按用户 ID 限流）
 app.Use(middleware.RateLimit(middleware.RateLimitConfig{
     Limiter: limiter,
-    KeyFunc: func(c *fiber.Ctx) string {
+    KeyFunc: func(c fiber.Ctx) string {
         return c.Get("X-User-ID")
     },
 }))
@@ -240,7 +240,7 @@ trustedProxies := middleware.NewTrustedProxyConfig([]string{
 })
 
 // Fiber 处理器中
-app.Get("/", func(c *fiber.Ctx) error {
+app.Get("/", func(c fiber.Ctx) error {
     clientIP := middleware.GetClientIPFiber(c, trustedProxies)
     return c.SendString("Your IP: " + clientIP)
 })
@@ -271,7 +271,7 @@ masked := middleware.MaskPhone("+1234567890")
 ```go
 import (
     "net/http"
-    middleware "github.com/soulteary/middleware-kit"
+    middleware "github.com/soulteary/middleware-kit/v2"
 )
 
 // API Key 认证
@@ -331,8 +331,10 @@ middleware-kit/
 ## 依赖要求
 
 - Go 1.26 或更高版本
-- github.com/gofiber/fiber/v2 v2.52.6+（Fiber 中间件）
+- github.com/gofiber/fiber/v3 v3.4.0+（Fiber 中间件）
 - github.com/rs/zerolog v1.34.0+（日志）
+
+此 v2 模块版本面向 Fiber v3。仍使用 Fiber v2 的应用应继续使用 `github.com/soulteary/middleware-kit` v1。
 
 ## 测试覆盖
 

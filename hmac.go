@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -56,10 +56,10 @@ type HMACConfig struct {
 	SignatureFunc func(timestamp, service, body, secret string) string
 
 	// ErrorHandler is called when authentication fails.
-	ErrorHandler func(c *fiber.Ctx, err error) error
+	ErrorHandler func(c fiber.Ctx, err error) error
 
 	// SuccessHandler is called when authentication succeeds.
-	SuccessHandler func(c *fiber.Ctx)
+	SuccessHandler func(c fiber.Ctx)
 
 	// Logger for logging authentication events.
 	Logger *zerolog.Logger
@@ -101,7 +101,7 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 		cfg.SignatureFunc = ComputeHMAC
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Get signature and timestamp from headers
 		signature := c.Get(cfg.SignatureHeader)
 		timestamp := c.Get(cfg.TimestampHeader)
@@ -333,7 +333,7 @@ func ComputeHMAC(timestamp, service, body, secret string) string {
 }
 
 // handleHMACError handles HMAC authentication errors.
-func handleHMACError(c *fiber.Ctx, cfg HMACConfig, err error) error {
+func handleHMACError(c fiber.Ctx, cfg HMACConfig, err error) error {
 	if cfg.ErrorHandler != nil {
 		return cfg.ErrorHandler(c, err)
 	}

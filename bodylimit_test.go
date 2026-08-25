@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,7 +26,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 1024, // 1KB
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -45,7 +45,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 100,
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -64,7 +64,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 10,
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -80,7 +80,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 10,
 		}))
-		app.Head("/", func(c *fiber.Ctx) error {
+		app.Head("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -97,7 +97,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 			MaxSize:   10,
 			SkipPaths: []string{"/upload"},
 		}))
-		app.Post("/upload", func(c *fiber.Ctx) error {
+		app.Post("/upload", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -114,13 +114,13 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		app := fiber.New()
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 10,
-			ErrorHandler: func(c *fiber.Ctx) error {
+			ErrorHandler: func(c fiber.Ctx) error {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 					"custom": "error",
 				})
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -136,7 +136,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 	t.Run("default max size is 4MB", func(t *testing.T) {
 		app := fiber.New()
 		app.Use(BodyLimit(BodyLimitConfig{})) // Use default
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -145,7 +145,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		req := httptest.NewRequest("POST", "/", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/octet-stream")
 
-		resp, err := app.Test(req, -1)
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
 		assert.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 	})
@@ -155,7 +155,7 @@ func TestBodyLimit_Fiber(t *testing.T) {
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 10,
 		}))
-		app.Options("/", func(c *fiber.Ctx) error {
+		app.Options("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -309,7 +309,7 @@ func TestBodyLimit_FiberWithLogger(t *testing.T) {
 			Logger:             &logger,
 			TrustedProxyConfig: DefaultTrustedProxyConfig(),
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -327,11 +327,11 @@ func TestBodyLimit_FiberWithLogger(t *testing.T) {
 		app := fiber.New()
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 50,
-			ErrorHandler: func(c *fiber.Ctx) error {
+			ErrorHandler: func(c fiber.Ctx) error {
 				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "too large"})
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -351,7 +351,7 @@ func TestBodyLimit_FiberWithLogger(t *testing.T) {
 			MaxSize:     10,
 			SkipMethods: nil, // Should default to GET, HEAD, OPTIONS
 		}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -365,11 +365,11 @@ func TestBodyLimit_FiberWithLogger(t *testing.T) {
 		app := fiber.New()
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 50,
-			ErrorHandler: func(c *fiber.Ctx) error {
+			ErrorHandler: func(c fiber.Ctx) error {
 				return c.Status(fiber.StatusPaymentRequired).JSON(fiber.Map{"custom": "error"})
 			},
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -387,7 +387,7 @@ func TestBodyLimit_FiberWithLogger(t *testing.T) {
 		app.Use(BodyLimit(BodyLimitConfig{
 			MaxSize: 0, // Should default to 4MB
 		}))
-		app.Post("/", func(c *fiber.Ctx) error {
+		app.Post("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 

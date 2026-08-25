@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -21,7 +21,7 @@ type BodyLimitConfig struct {
 	SkipPaths []string
 
 	// ErrorHandler is called when the body size exceeds the limit.
-	ErrorHandler func(c *fiber.Ctx) error
+	ErrorHandler func(c fiber.Ctx) error
 
 	// Logger for logging body limit events.
 	Logger *zerolog.Logger
@@ -57,7 +57,7 @@ func BodyLimit(cfg BodyLimitConfig) fiber.Handler {
 		skipPathMap[p] = true
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Skip certain methods
 		if skipMethodMap[c.Method()] {
 			return c.Next()

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,7 +13,7 @@ func TestSecurityHeaders_Fiber(t *testing.T) {
 	t.Run("default security headers", func(t *testing.T) {
 		app := fiber.New()
 		app.Use(SecurityHeaders(DefaultSecurityHeadersConfig()))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -31,7 +31,7 @@ func TestSecurityHeaders_Fiber(t *testing.T) {
 	t.Run("strict security headers", func(t *testing.T) {
 		app := fiber.New()
 		app.Use(SecurityHeaders(StrictSecurityHeadersConfig()))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -56,7 +56,7 @@ func TestSecurityHeaders_Fiber(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(SecurityHeaders(cfg))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -70,7 +70,7 @@ func TestSecurityHeaders_Fiber(t *testing.T) {
 	t.Run("empty config sets nothing", func(t *testing.T) {
 		app := fiber.New()
 		app.Use(SecurityHeaders(SecurityHeadersConfig{}))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -198,7 +198,7 @@ func TestSecurityHeaders_FiberAllHeaders(t *testing.T) {
 
 		app := fiber.New()
 		app.Use(SecurityHeaders(cfg))
-		app.Get("/", func(c *fiber.Ctx) error {
+		app.Get("/", func(c fiber.Ctx) error {
 			return c.SendString("OK")
 		})
 
@@ -217,7 +217,7 @@ func TestSecurityHeaders_FiberAllHeaders(t *testing.T) {
 func TestNoCacheHeaders_Fiber(t *testing.T) {
 	app := fiber.New()
 	app.Use(NoCacheHeaders())
-	app.Get("/", func(c *fiber.Ctx) error {
+	app.Get("/", func(c fiber.Ctx) error {
 		return c.SendString("OK")
 	})
 

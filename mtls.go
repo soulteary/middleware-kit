@@ -4,7 +4,7 @@ import (
 	"crypto/x509"
 	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -33,11 +33,11 @@ type MTLSConfig struct {
 	CertValidator func(cert *x509.Certificate) error
 
 	// ErrorHandler is called when authentication fails.
-	ErrorHandler func(c *fiber.Ctx, err error) error
+	ErrorHandler func(c fiber.Ctx, err error) error
 
 	// SuccessHandler is called when authentication succeeds.
 	// The verified certificate is passed to this handler.
-	SuccessHandler func(c *fiber.Ctx, cert *x509.Certificate)
+	SuccessHandler func(c fiber.Ctx, cert *x509.Certificate)
 
 	// Logger for logging authentication events.
 	Logger *zerolog.Logger
@@ -72,7 +72,7 @@ func MTLSAuth(cfg MTLSConfig) fiber.Handler {
 		allowedDNSSANs[san] = true
 	}
 
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		// Check if connection is TLS
 		if c.Protocol() != "https" {
 			if cfg.RequireCert {
@@ -85,7 +85,7 @@ func MTLSAuth(cfg MTLSConfig) fiber.Handler {
 		}
 
 		// Get TLS connection state
-		tlsConn := c.Context().TLSConnectionState()
+		tlsConn := c.RequestCtx().TLSConnectionState()
 		if tlsConn == nil {
 			if cfg.RequireCert {
 				if cfg.Logger != nil {
@@ -327,7 +327,7 @@ func MTLSAuthStd(cfg MTLSConfig) func(http.Handler) http.Handler {
 }
 
 // handleMTLSError handles mTLS authentication errors.
-func handleMTLSError(c *fiber.Ctx, cfg MTLSConfig, err error) error {
+func handleMTLSError(c fiber.Ctx, cfg MTLSConfig, err error) error {
 	if cfg.ErrorHandler != nil {
 		return cfg.ErrorHandler(c, err)
 	}
