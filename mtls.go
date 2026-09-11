@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/x509"
+	"errors"
 	"net/http"
 
 	"github.com/gofiber/fiber/v3"
@@ -56,21 +57,7 @@ func DefaultMTLSConfig() MTLSConfig {
 // MTLSAuth creates a Fiber middleware for mTLS client certificate authentication.
 // Note: This middleware requires TLS to be properly configured with ClientAuth.
 func MTLSAuth(cfg MTLSConfig) fiber.Handler {
-	// Build lookup maps for faster checking
-	allowedCNs := make(map[string]bool)
-	for _, cn := range cfg.AllowedCNs {
-		allowedCNs[cn] = true
-	}
-
-	allowedOUs := make(map[string]bool)
-	for _, ou := range cfg.AllowedOUs {
-		allowedOUs[ou] = true
-	}
-
-	allowedDNSSANs := make(map[string]bool)
-	for _, san := range cfg.AllowedDNSSANs {
-		allowedDNSSANs[san] = true
-	}
+	lists := newCertAllowLists(cfg)
 
 	return func(c fiber.Ctx) error {
 		// Check if connection is TLS
@@ -84,97 +71,22 @@ func MTLSAuth(cfg MTLSConfig) fiber.Handler {
 			return c.Next()
 		}
 
-		// Get TLS connection state
-		tlsConn := c.RequestCtx().TLSConnectionState()
-		if tlsConn == nil {
-			if cfg.RequireCert {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().Msg("mTLS authentication failed: TLS state not available")
-				}
-				return handleMTLSError(c, cfg, ErrMTLSCertificateMissing)
+		// Validate the certificate: it must be verified by the TLS layer and
+		// satisfy every restriction in cfg.
+		cert, err := authenticateMTLS(c.RequestCtx().TLSConnectionState(), cfg, lists)
+		if err != nil {
+			if !cfg.RequireCert && errors.Is(err, ErrMTLSCertificateMissing) {
+				return c.Next()
 			}
-			return c.Next()
-		}
-
-		// Check if client certificate is present
-		if len(tlsConn.PeerCertificates) == 0 {
-			if cfg.RequireCert {
-				if cfg.Logger != nil {
-					clientIP := GetClientIPFiber(c, cfg.TrustedProxyConfig)
-					cfg.Logger.Warn().
-						Str("ip", clientIP).
-						Str("path", c.Path()).
-						Msg("mTLS authentication failed: no client certificate")
-				}
-				return handleMTLSError(c, cfg, ErrMTLSCertificateMissing)
+			if cfg.Logger != nil {
+				clientIP := GetClientIPFiber(c, cfg.TrustedProxyConfig)
+				cfg.Logger.Warn().
+					Str("ip", clientIP).
+					Str("path", c.Path()).
+					Err(err).
+					Msg("mTLS authentication failed")
 			}
-			return c.Next()
-		}
-
-		// Get the first (leaf) certificate
-		cert := tlsConn.PeerCertificates[0]
-
-		// Validate Common Name if restrictions are set
-		if len(allowedCNs) > 0 {
-			if !allowedCNs[cert.Subject.CommonName] {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().
-						Str("cn", cert.Subject.CommonName).
-						Msg("mTLS authentication failed: CN not allowed")
-				}
-				return handleMTLSError(c, cfg, ErrMTLSCertificateInvalid)
-			}
-		}
-
-		// Validate Organizational Unit if restrictions are set
-		if len(allowedOUs) > 0 {
-			ouMatch := false
-			for _, ou := range cert.Subject.OrganizationalUnit {
-				if allowedOUs[ou] {
-					ouMatch = true
-					break
-				}
-			}
-			if !ouMatch {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().
-						Strs("ou", cert.Subject.OrganizationalUnit).
-						Msg("mTLS authentication failed: OU not allowed")
-				}
-				return handleMTLSError(c, cfg, ErrMTLSCertificateInvalid)
-			}
-		}
-
-		// Validate DNS SANs if restrictions are set
-		if len(allowedDNSSANs) > 0 {
-			sanMatch := false
-			for _, san := range cert.DNSNames {
-				if allowedDNSSANs[san] {
-					sanMatch = true
-					break
-				}
-			}
-			if !sanMatch {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().
-						Strs("dns_sans", cert.DNSNames).
-						Msg("mTLS authentication failed: DNS SAN not allowed")
-				}
-				return handleMTLSError(c, cfg, ErrMTLSCertificateInvalid)
-			}
-		}
-
-		// Run custom validator if provided
-		if cfg.CertValidator != nil {
-			if err := cfg.CertValidator(cert); err != nil {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().
-						Err(err).
-						Str("cn", cert.Subject.CommonName).
-						Msg("mTLS authentication failed: custom validation failed")
-				}
-				return handleMTLSError(c, cfg, err)
-			}
+			return handleMTLSError(c, cfg, err)
 		}
 
 		// Authentication successful
@@ -195,122 +107,25 @@ func MTLSAuth(cfg MTLSConfig) fiber.Handler {
 
 // MTLSAuthStd creates a standard net/http middleware for mTLS authentication.
 func MTLSAuthStd(cfg MTLSConfig) func(http.Handler) http.Handler {
-	// Build lookup maps for faster checking
-	allowedCNs := make(map[string]bool)
-	for _, cn := range cfg.AllowedCNs {
-		allowedCNs[cn] = true
-	}
-
-	allowedOUs := make(map[string]bool)
-	for _, ou := range cfg.AllowedOUs {
-		allowedOUs[ou] = true
-	}
-
-	allowedDNSSANs := make(map[string]bool)
-	for _, san := range cfg.AllowedDNSSANs {
-		allowedDNSSANs[san] = true
-	}
+	lists := newCertAllowLists(cfg)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Check if connection is TLS
-			if r.TLS == nil {
-				if cfg.RequireCert {
-					if cfg.Logger != nil {
-						cfg.Logger.Warn().Msg("mTLS authentication failed: not a TLS connection")
-					}
-					http.Error(w, "Unauthorized: TLS required", http.StatusUnauthorized)
+			cert, err := authenticateMTLS(r.TLS, cfg, lists)
+			if err != nil {
+				if !cfg.RequireCert && errors.Is(err, ErrMTLSCertificateMissing) {
+					next.ServeHTTP(w, r)
 					return
 				}
-				next.ServeHTTP(w, r)
+				if cfg.Logger != nil {
+					cfg.Logger.Warn().
+						Str("ip", GetClientIP(r, cfg.TrustedProxyConfig)).
+						Str("path", r.URL.Path).
+						Err(err).
+						Msg("mTLS authentication failed")
+				}
+				http.Error(w, "Unauthorized: client certificate required", http.StatusUnauthorized)
 				return
-			}
-
-			// Check if client certificate is present
-			if len(r.TLS.PeerCertificates) == 0 {
-				if cfg.RequireCert {
-					if cfg.Logger != nil {
-						clientIP := GetClientIP(r, cfg.TrustedProxyConfig)
-						cfg.Logger.Warn().
-							Str("ip", clientIP).
-							Str("path", r.URL.Path).
-							Msg("mTLS authentication failed: no client certificate")
-					}
-					http.Error(w, "Unauthorized: client certificate required", http.StatusUnauthorized)
-					return
-				}
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Get the first (leaf) certificate
-			cert := r.TLS.PeerCertificates[0]
-
-			// Validate Common Name if restrictions are set
-			if len(allowedCNs) > 0 {
-				if !allowedCNs[cert.Subject.CommonName] {
-					if cfg.Logger != nil {
-						cfg.Logger.Warn().
-							Str("cn", cert.Subject.CommonName).
-							Msg("mTLS authentication failed: CN not allowed")
-					}
-					http.Error(w, "Unauthorized: certificate not allowed", http.StatusUnauthorized)
-					return
-				}
-			}
-
-			// Validate Organizational Unit if restrictions are set
-			if len(allowedOUs) > 0 {
-				ouMatch := false
-				for _, ou := range cert.Subject.OrganizationalUnit {
-					if allowedOUs[ou] {
-						ouMatch = true
-						break
-					}
-				}
-				if !ouMatch {
-					if cfg.Logger != nil {
-						cfg.Logger.Warn().
-							Strs("ou", cert.Subject.OrganizationalUnit).
-							Msg("mTLS authentication failed: OU not allowed")
-					}
-					http.Error(w, "Unauthorized: certificate not allowed", http.StatusUnauthorized)
-					return
-				}
-			}
-
-			// Validate DNS SANs if restrictions are set
-			if len(allowedDNSSANs) > 0 {
-				sanMatch := false
-				for _, san := range cert.DNSNames {
-					if allowedDNSSANs[san] {
-						sanMatch = true
-						break
-					}
-				}
-				if !sanMatch {
-					if cfg.Logger != nil {
-						cfg.Logger.Warn().
-							Strs("dns_sans", cert.DNSNames).
-							Msg("mTLS authentication failed: DNS SAN not allowed")
-					}
-					http.Error(w, "Unauthorized: certificate not allowed", http.StatusUnauthorized)
-					return
-				}
-			}
-
-			// Run custom validator if provided
-			if cfg.CertValidator != nil {
-				if err := cfg.CertValidator(cert); err != nil {
-					if cfg.Logger != nil {
-						cfg.Logger.Warn().
-							Err(err).
-							Str("cn", cert.Subject.CommonName).
-							Msg("mTLS authentication failed: custom validation failed")
-					}
-					http.Error(w, "Unauthorized: certificate validation failed", http.StatusUnauthorized)
-					return
-				}
 			}
 
 			// Authentication successful
@@ -333,10 +148,12 @@ func handleMTLSError(c fiber.Ctx, cfg MTLSConfig, err error) error {
 	}
 
 	reason := "unauthorized"
-	switch err {
-	case ErrMTLSCertificateMissing:
+	switch {
+	case errors.Is(err, ErrMTLSCertificateMissing):
 		reason = "certificate_required"
-	case ErrMTLSCertificateInvalid:
+	case errors.Is(err, ErrMTLSCertificateUnverified):
+		reason = "certificate_unverified"
+	case errors.Is(err, ErrMTLSCertificateInvalid):
 		reason = "certificate_invalid"
 	}
 

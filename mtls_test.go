@@ -241,6 +241,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -261,6 +262,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -281,6 +283,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -301,6 +304,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -321,6 +325,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -341,6 +346,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -361,6 +367,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -386,6 +393,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -408,6 +416,7 @@ func TestMTLSAuthStd_WithCertificate(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 
@@ -545,6 +554,7 @@ func TestMTLSAuthStd_WithLogger(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 		middleware.ServeHTTP(rr, req)
@@ -570,6 +580,7 @@ func TestMTLSAuthStd_WithLogger(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 		middleware.ServeHTTP(rr, req)
@@ -595,6 +606,7 @@ func TestMTLSAuthStd_WithLogger(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 		middleware.ServeHTTP(rr, req)
@@ -622,6 +634,7 @@ func TestMTLSAuthStd_WithLogger(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 		middleware.ServeHTTP(rr, req)
@@ -646,6 +659,7 @@ func TestMTLSAuthStd_WithLogger(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.TLS = &tls.ConnectionState{
 			PeerCertificates: []*x509.Certificate{mockCert},
+			VerifiedChains:   [][]*x509.Certificate{{mockCert}},
 		}
 		rr := httptest.NewRecorder()
 		middleware.ServeHTTP(rr, req)

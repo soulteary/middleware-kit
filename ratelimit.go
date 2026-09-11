@@ -27,7 +27,13 @@ type RateLimiter struct {
 
 // visitor tracks request counts for a single IP/key.
 type visitor struct {
-	count    int
+	count int
+	// windowStart is when the current counting window opened. Keeping this
+	// separate from lastSeen is what makes the limiter a real "N per window":
+	// the window must roll over on schedule, not only after an idle gap.
+	windowStart time.Time
+
+	// lastSeen is only used for eviction bookkeeping.
 	lastSeen time.Time
 }
 
@@ -170,16 +176,25 @@ func (rl *RateLimiter) Allow(key string) bool {
 			rl.cleanupOldestVisitors()
 		}
 		rl.visitors[key] = &visitor{
-			count:    1,
-			lastSeen: now,
+			count:       1,
+			windowStart: now,
+			lastSeen:    now,
 		}
 		return true
 	}
 
-	// If window has passed, reset count
-	if now.Sub(v.lastSeen) > rl.window {
+	v.lastSeen = now
+
+	// Roll the window over once it has elapsed since it opened.
+	//
+	// This used to compare against lastSeen, which was refreshed on every
+	// allowed request. A client sending faster than one request per window
+	// therefore never rolled over: the counter only ever grew, so "100 per
+	// minute" actually meant "100 requests, then a full minute of silence".
+	// A steady 1 req/s client was blocked at the 100th second.
+	if now.Sub(v.windowStart) >= rl.window {
 		v.count = 1
-		v.lastSeen = now
+		v.windowStart = now
 		return true
 	}
 
@@ -189,7 +204,6 @@ func (rl *RateLimiter) Allow(key string) bool {
 	}
 
 	v.count++
-	v.lastSeen = now
 	return true
 }
 

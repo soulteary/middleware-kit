@@ -25,8 +25,23 @@ func isTimestampValid(timestamp, maxDriftSeconds int64) bool {
 }
 
 // constantTimeEqual compares two strings in constant time to prevent timing attacks.
+// constantTimeEqual compares two strings without leaking how much of them
+// matched, or how long the expected value is.
+//
+// subtle.ConstantTimeCompare returns early when the lengths differ, so calling
+// it directly on a secret and an attacker-supplied value leaks the secret's
+// length through timing. Both inputs are padded to the same size first, and
+// the length check is folded into the result.
 func constantTimeEqual(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	pa := make([]byte, n)
+	pb := make([]byte, n)
+	copy(pa, a)
+	copy(pb, b)
+	return subtle.ConstantTimeCompare(pa, pb) == 1 && len(a) == len(b)
 }
 
 // readBody reads the request body and restores it for subsequent handlers.

@@ -22,6 +22,10 @@ type APIKeyConfig struct {
 	// QueryParamName is the query parameter name to look for the API key.
 	// If set, the middleware will also check query parameters.
 	// Default: "" (disabled)
+	//
+	// Enable this only when a client genuinely cannot set headers. A key in
+	// the query string is recorded by access logs, proxy logs, browser
+	// history, and is sent onwards in the Referer header of any outbound link.
 	QueryParamName string
 
 	// AuthScheme is the Authorization header scheme (e.g., "Bearer", "ApiKey").

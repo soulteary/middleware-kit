@@ -37,6 +37,11 @@ type AuthConfig struct {
 // Authentication methods are tried in order: mTLS > HMAC > API Key.
 // The first successful authentication allows the request through.
 func CombinedAuth(cfg AuthConfig) fiber.Handler {
+	var mtlsLists certAllowLists
+	if cfg.MTLSConfig != nil {
+		mtlsLists = newCertAllowLists(*cfg.MTLSConfig)
+	}
+
 	return func(c fiber.Ctx) error {
 		// Check if any authentication method is configured
 		hasMTLS := cfg.MTLSConfig != nil
@@ -53,16 +58,27 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 			return handleCombinedAuthError(c, cfg, ErrUnauthorized)
 		}
 
-		// Try mTLS first (if TLS connection with verified client certificate)
+		// Try mTLS first (if TLS connection with a verified client certificate).
+		//
+		// This runs the same authenticateMTLS check as the dedicated MTLSAuth
+		// middleware. Previously it only tested len(PeerCertificates) > 0 and
+		// returned c.Next(), which meant AllowedCNs, AllowedOUs,
+		// AllowedDNSSANs and CertValidator were all silently ignored here --
+		// any client certificate, including a self-signed one, authenticated.
 		if hasMTLS && c.Protocol() == "https" {
-			tlsConn := c.RequestCtx().TLSConnectionState()
-			if tlsConn != nil && len(tlsConn.PeerCertificates) > 0 {
-				// Client certificate is present and verified (by TLS layer)
+			cert, err := authenticateMTLS(c.RequestCtx().TLSConnectionState(), *cfg.MTLSConfig, mtlsLists)
+			if err == nil {
 				if cfg.Logger != nil {
-					cfg.Logger.Debug().Msg("Request authenticated via mTLS")
+					cfg.Logger.Debug().
+						Str("cn", cert.Subject.CommonName).
+						Msg("Request authenticated via mTLS")
 				}
 				return c.Next()
 			}
+			if cfg.Logger != nil {
+				cfg.Logger.Debug().Err(err).Msg("mTLS authentication did not apply")
+			}
+			// Fall through to the remaining methods.
 		}
 
 		// Try HMAC signature
@@ -150,16 +166,29 @@ func validateHMAC(c fiber.Ctx, cfg HMACConfig) bool {
 		return false
 	}
 
-	// Compute expected signature
-	signFunc := cfg.SignatureFunc
-	if signFunc == nil {
-		signFunc = ComputeHMAC
+	if !validService(service) {
+		return false
 	}
 
-	body := string(c.Body())
-	expectedSig := signFunc(timestamp, service, body, secret)
+	expectedSig := cfg.expectedSignature(SignatureInput{
+		Method:    c.Method(),
+		Path:      c.Path(),
+		RawQuery:  string(c.RequestCtx().URI().QueryString()),
+		Timestamp: timestamp,
+		Service:   service,
+		Body:      string(c.Body()),
+		Secret:    secret,
+	})
 
-	return constantTimeEqual(signature, expectedSig)
+	if !constantTimeEqual(signature, expectedSig) {
+		return false
+	}
+
+	if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, cfg.MaxTimeDrift) {
+		return false
+	}
+
+	return true
 }
 
 // validateAPIKey performs inline API key validation.
