@@ -282,9 +282,13 @@ func TestBoundSignatureCoversTheEscapedPath(t *testing.T) {
 // symmetrically, so a request stamped MaxTimeDrift in the FUTURE is accepted
 // now and stays acceptable for another drift. Retaining the entry for only one
 // drift let the same capture through a second time.
+//
+// The exact lower bound -- including the trailing second that integer-second
+// validation adds -- is asserted by
+// TestReplayRetentionCoversTheFinalSecondOfValidity.
 func TestReplayRetentionCoversTheWholeValidityWindow(t *testing.T) {
-	if got, want := replayRetention(5*time.Minute), 10*time.Minute; got != want {
-		t.Errorf("replayRetention(5m) = %s, want %s (two drifts of validity)", got, want)
+	if got, want := replayRetention(5*time.Minute), 10*time.Minute; got < want {
+		t.Errorf("replayRetention(5m) = %s, want at least %s (two drifts of validity)", got, want)
 	}
 	if got := replayRetention(0); got != 0 {
 		t.Errorf("replayRetention(0) = %s, want 0", got)
@@ -361,28 +365,65 @@ func (g *recordingGuard) Seen(id string, ttl time.Duration) bool {
 	return was
 }
 
-// TestServicePolicyOnlyAppliesToTheAmbiguousEncoding: the ":" restriction
-// exists because ComputeHMAC's "timestamp:service:body" form has no field
-// boundaries. Applying it unconditionally rejected service identifiers that
-// were always valid under a length-prefixed or custom encoding, answering
-// previously working clients with 401.
-func TestServicePolicyOnlyAppliesToTheAmbiguousEncoding(t *testing.T) {
-	legacy := HMACConfig{Secret: "s"}
-	if legacy.serviceAllowed("a:b") {
-		t.Error("the legacy encoding accepted a service containing ':'")
+// TestServicePolicyIsOnUnlessTheSignerIsKnownSafe: the ":" restriction exists
+// because ComputeHMAC's "timestamp:service:body" form has no field
+// boundaries. It may only be lifted when the configuration positively
+// establishes that the signer is unambiguous -- never by inferring it from a
+// function being non-nil, which is true of ComputeHMAC itself.
+func TestServicePolicyIsOnUnlessTheSignerIsKnownSafe(t *testing.T) {
+	allowed := func(cfg HMACConfig) bool { return cfg.serviceAllowed("a:b") }
+
+	if allowed(HMACConfig{Secret: "s"}) {
+		t.Error("the default signer accepted a service containing ':'")
 	}
-	if !legacy.serviceAllowed("plain") {
-		t.Error("the legacy encoding rejected an ordinary service name")
+	if !(HMACConfig{Secret: "s"}).serviceAllowed("plain") {
+		t.Error("the default signer rejected an ordinary service name")
 	}
 
-	bound := HMACConfig{Secret: "s", RequestSignatureFunc: ComputeHMACBound}
-	if !bound.serviceAllowed("a:b") {
-		t.Error("the length-prefixed encoding rejected a service containing ':'; it has no delimiter to collide with")
+	// The round-3 hole: the exported default, assigned by hand. It signs the
+	// ambiguous bytes, so it must keep the guard.
+	if allowed(HMACConfig{Secret: "s", SignatureFunc: ComputeHMAC}) {
+		t.Error("an explicit SignatureFunc: ComputeHMAC turned the colon guard off")
+	}
+	wrapped := func(ts, svc, body, secret string) string { return ComputeHMAC(ts, svc, body, secret) }
+	if allowed(HMACConfig{Secret: "s", SignatureFunc: wrapped}) {
+		t.Error("a wrapper around ComputeHMAC turned the colon guard off")
 	}
 
-	custom := HMACConfig{Secret: "s", SignatureFunc: func(ts, svc, body, secret string) string { return "x" }}
-	if !custom.serviceAllowed("a:b") {
-		t.Error("a caller's own SignatureFunc had the legacy service policy imposed on it")
+	// A signer whose encoding this package cannot see is not assumed safe.
+	custom := func(ts, svc, body, secret string) string { return "x" }
+	if allowed(HMACConfig{Secret: "s", SignatureFunc: custom}) {
+		t.Error("an unknown custom SignatureFunc was assumed unambiguous")
+	}
+	customBound := func(in SignatureInput) string { return "x" }
+	if allowed(HMACConfig{Secret: "s", RequestSignatureFunc: customBound}) {
+		t.Error("an unknown custom RequestSignatureFunc was assumed unambiguous")
+	}
+
+	// The two ways out: this package's own length-prefixed signer, and the
+	// caller saying so.
+	if !allowed(HMACConfig{Secret: "s", RequestSignatureFunc: ComputeHMACBound}) {
+		t.Error("ComputeHMACBound had the legacy service policy imposed on it")
+	}
+	if !allowed(HMACConfig{Secret: "s", SignatureFunc: custom, AllowDelimitersInService: true}) {
+		t.Error("AllowDelimitersInService did not lift the guard")
+	}
+}
+
+// TestReplayRetentionCoversTheFinalSecondOfValidity: retention has to span the
+// whole time one timestamp stays acceptable. Because validation compares
+// integer seconds inclusively, that span is 2*drift + 1s, not 2*drift -- and
+// the missing second was a window in which a captured request replayed.
+func TestReplayRetentionCoversTheFinalSecondOfValidity(t *testing.T) {
+	const drift = 5 * time.Minute
+
+	// Derived from isTimestampValid rather than restated: it accepts while
+	// |floor(now) - ts| <= drift, so ts is first acceptable at ts-drift and
+	// stays acceptable until floor(now) ticks to ts+drift+1.
+	span := (drift + time.Second) - (-drift)
+
+	if got := replayRetention(drift); got < span {
+		t.Errorf("retention %s over a %s validity window; the last %s is replayable", got, span, span-got)
 	}
 }
 
@@ -550,10 +591,49 @@ func TestDefaultSignerKeepsTheColonGuard(t *testing.T) {
 	if !bound.serviceAllowed("a:b") {
 		t.Error("the length-prefixed encoding had the legacy service policy imposed on it")
 	}
-	if bound.usesLegacyEncoding() {
-		t.Error("a configured RequestSignatureFunc was reported as the legacy encoding")
+	if !bound.usesBoundEncoding() {
+		t.Error("ComputeHMACBound was not recognised as the length-prefixed signer")
 	}
-	if !(HMACConfig{Secret: secret}).usesLegacyEncoding() {
-		t.Error("the default configuration was not reported as the legacy encoding")
+	if (HMACConfig{Secret: secret}).usesBoundEncoding() {
+		t.Error("the default configuration was reported as the length-prefixed signer")
+	}
+
+	// The same forged pair, now against a hand-written SignatureFunc:
+	// ComputeHMAC. This is the default signer under another name, so the
+	// guard must still reject the shifted service.
+	explicit := HMACAuthStd(HMACConfig{Secret: secret, MaxTimeDrift: time.Hour, SignatureFunc: ComputeHMAC})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	if got := send(explicit); got == http.StatusOK {
+		t.Error("an explicit SignatureFunc: ComputeHMAC accepted the shifted service identifier")
+	}
+}
+
+// TestCombinedAuthDefaultDriftIsFiveMinutes is the regression test for
+// "maxDrift = 5 * 60 // 5 minutes in seconds" in validateHMAC. maxDrift is a
+// time.Duration, so that literal was 300 NANOSECONDS: int64(maxDrift.Seconds())
+// truncated to 0 and the documented zero value accepted only a timestamp
+// landing on the current second, while the replay guard retained entries for
+// 600ns. A request a few seconds old is well inside the documented default.
+func TestCombinedAuthDefaultDriftIsFiveMinutes(t *testing.T) {
+	const secret = "test-secret"
+
+	app := fiber.New()
+	app.Use(CombinedAuth(AuthConfig{
+		// MaxTimeDrift deliberately left at its zero value.
+		HMACConfig: &HMACConfig{Secret: secret},
+	}))
+	app.Post("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+	ts := strconv.FormatInt(time.Now().Add(-5*time.Second).Unix(), 10)
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("body"))
+	req.Header.Set("X-Timestamp", ts)
+	req.Header.Set("X-Signature", ComputeHMAC(ts, "", "body", secret))
+
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Errorf("a 5s-old timestamp got %d with the default drift; the default must be 5 minutes", resp.StatusCode)
 	}
 }

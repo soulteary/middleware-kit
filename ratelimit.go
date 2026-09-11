@@ -38,7 +38,18 @@ type RateLimiter struct {
 // than Rate. Keeping the timestamps costs at most Rate int64s per visitor and
 // removes the approximation entirely.
 type visitor struct {
-	// stamps is a ring buffer of up to Rate request times, oldest at head.
+	// epoch anchors the ring. Stamps are offsets from it, measured with
+	// time.Time.Sub, which subtracts Go's MONOTONIC clock readings when both
+	// operands carry one -- as anything derived from time.Now() does.
+	//
+	// UnixNano would discard that reading and leave the ring ordered by the
+	// wall clock, so a backward step (an NTP correction, a VM restore) makes
+	// existing stamps look like the future: they never fall past the cutoff,
+	// and the visitor stays limited long after its window should have drained
+	// while its own retries keep it from being evicted.
+	epoch time.Time
+
+	// stamps is a ring buffer of up to Rate request offsets, oldest at head.
 	stamps []int64
 	head   int
 	count  int
@@ -49,7 +60,8 @@ type visitor struct {
 
 // allow records a request at now if the trailing window has room for it.
 func (v *visitor) allow(now time.Time, window time.Duration, rate int) bool {
-	cutoff := now.Add(-window).UnixNano()
+	at := int64(now.Sub(v.epoch))
+	cutoff := at - int64(window)
 
 	// Drop the timestamps that have left the trailing window. They are in
 	// ascending order, so this stops at the first one still inside it.
@@ -62,7 +74,7 @@ func (v *visitor) allow(now time.Time, window time.Duration, rate int) bool {
 		return false
 	}
 
-	v.stamps[(v.head+v.count)%len(v.stamps)] = now.UnixNano()
+	v.stamps[(v.head+v.count)%len(v.stamps)] = at
 	v.count++
 	return true
 }
@@ -72,8 +84,8 @@ func newVisitor(now time.Time, rate int) *visitor {
 	if rate < 1 {
 		rate = 1
 	}
-	v := &visitor{stamps: make([]int64, rate), lastSeen: now}
-	v.stamps[0] = now.UnixNano()
+	v := &visitor{epoch: now, stamps: make([]int64, rate), lastSeen: now}
+	v.stamps[0] = 0
 	v.count = 1
 	return v
 }

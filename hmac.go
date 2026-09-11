@@ -60,6 +60,22 @@ type HMACConfig struct {
 	// signature to the request target.
 	SignatureFunc func(timestamp, service, body, secret string) string
 
+	// AllowDelimitersInService permits ':' in the service identifier.
+	//
+	// ':' is rejected by default because ComputeHMAC -- the signer used when
+	// neither function below is set -- signs "timestamp:service:body", which
+	// has no field boundaries: (service "a", body "b:c") and (service "a:b",
+	// body "c") produce the same bytes, so one signature stands for two
+	// different requests.
+	//
+	// Whether a signer is safe from that cannot be inferred from the config:
+	// SignatureFunc may be ComputeHMAC itself, or a wrapper around it, and a
+	// custom RequestSignatureFunc may concatenate just as ambiguously. So the
+	// guard stays on unless you turn it off here, having checked that your
+	// signer frames its fields unambiguously. This package's own
+	// ComputeHMACBound is length-prefixed and is recognised without the flag.
+	AllowDelimitersInService bool
+
 	// RequestSignatureFunc computes the expected signature over the full
 	// request, including its method, path and query. When set it takes
 	// precedence over SignatureFunc.

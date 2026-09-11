@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -95,44 +96,59 @@ func validService(service string) bool {
 // serviceAllowed reports whether service may be used with cfg's signature
 // function.
 //
-// The ":" restriction exists only because ComputeHMAC's
-// "timestamp:service:body" form has no field boundaries. It does NOT apply to
-// ComputeHMACBound, whose length-prefixed encoding cannot be shifted, nor to a
-// caller's own SignatureFunc, which has its own encoding and its own rules --
-// applying it there rejected service identifiers that had always been valid
-// and answered previously working clients with 401.
+// The guard is ON unless the configuration positively establishes that the
+// signer is unambiguous. Only two things establish that: the caller setting
+// AllowDelimitersInService, and this package's own length-prefixed
+// ComputeHMACBound.
+//
+// Non-nilness does not establish it, which is what an earlier version got
+// wrong. "SignatureFunc != nil means a custom signer, so the legacy encoding
+// is not in use" is false for the one assignment most likely to be written by
+// hand -- SignatureFunc: ComputeHMAC, the exported default -- and equally
+// false for any wrapper around it, or for a custom RequestSignatureFunc that
+// concatenates its fields. Each of those turned the guard off while signing
+// exactly the ambiguous bytes it exists to defend.
 func (cfg HMACConfig) serviceAllowed(service string) bool {
-	if cfg.usesLegacyEncoding() {
-		return validService(service)
+	if cfg.AllowDelimitersInService || cfg.usesBoundEncoding() {
+		return true
 	}
-	return true
+	return validService(service)
 }
 
-// usesLegacyEncoding reports whether signatures are computed with
-// ComputeHMAC's ambiguous "timestamp:service:body" form.
+// usesBoundEncoding reports whether signatures are computed by this package's
+// own ComputeHMACBound, whose length-prefixed framing cannot be shifted.
 //
-// This must be decided from what the CALLER supplied. The middleware
-// constructors used to assign the default ComputeHMAC to cfg.SignatureFunc
-// before the request handler ran, so asking "is SignatureFunc non-nil?" said
-// "custom signer" for the plain default configuration and let ':' through.
-// They no longer materialize that default; expectedSignature falls back to
-// ComputeHMAC on its own.
-func (cfg HMACConfig) usesLegacyEncoding() bool {
-	return cfg.RequestSignatureFunc == nil && cfg.SignatureFunc == nil
+// The comparison is by function identity, so only ComputeHMACBound itself
+// qualifies; a wrapper around it is a different function and keeps the guard
+// on. That is the safe direction to be wrong in -- such a caller sets
+// AllowDelimitersInService -- and it is why this is not generalised to "any
+// RequestSignatureFunc".
+func (cfg HMACConfig) usesBoundEncoding() bool {
+	if cfg.RequestSignatureFunc == nil {
+		return false
+	}
+	return reflect.ValueOf(cfg.RequestSignatureFunc).Pointer() ==
+		reflect.ValueOf(ComputeHMACBound).Pointer()
 }
 
 // replayRetention is how long a ReplayGuard must remember a signature.
 //
-// Timestamps are accepted symmetrically around now, so a request stamped
-// maxDrift in the FUTURE is accepted immediately and stays acceptable until
-// maxDrift after that -- almost two drifts of total validity. Retaining an
-// entry for only one drift let the same captured request through a second
-// time once the first retention elapsed.
+// It has to cover the whole span over which one timestamp stays acceptable.
+// Timestamps are validated as integer seconds, inclusively, against
+// time.Now().Unix(): a request stamped ts is accepted while
+// ts-drift <= floor(now) <= ts+drift, so the first acceptance can be as early
+// as ts-drift and the last as late as ts+drift+1 (a whole second past
+// ts+drift, because floor(now) does not tick until then).
+//
+// Hence 2*drift + 1s. Retaining for one drift let a captured request through
+// again as soon as the first retention elapsed; retaining for exactly two
+// left the final fractional second of validity uncovered -- with the 5 minute
+// default, a 0.9s window in which the same request replayed successfully.
 func replayRetention(maxDrift time.Duration) time.Duration {
 	if maxDrift <= 0 {
 		return 0
 	}
-	return 2 * maxDrift
+	return 2*maxDrift + time.Second
 }
 
 // ReplayGuard records request identities that have already been accepted, so a

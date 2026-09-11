@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
@@ -159,7 +161,11 @@ func validateHMAC(c fiber.Ctx, cfg HMACConfig) bool {
 
 	maxDrift := cfg.MaxTimeDrift
 	if maxDrift == 0 {
-		maxDrift = 5 * 60 // 5 minutes in seconds
+		// 5 * 60 here was a time.Duration of 300 NANOSECONDS, not five
+		// minutes: int64(maxDrift.Seconds()) then rounded to 0, so the
+		// documented zero value demanded a timestamp matching the current
+		// second exactly, and the replay guard retained entries for 600ns.
+		maxDrift = 5 * time.Minute
 	}
 
 	if !isTimestampValid(ts, int64(maxDrift.Seconds())) {
