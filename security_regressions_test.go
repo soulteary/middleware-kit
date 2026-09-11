@@ -637,3 +637,43 @@ func TestCombinedAuthDefaultDriftIsFiveMinutes(t *testing.T) {
 		t.Errorf("a 5s-old timestamp got %d with the default drift; the default must be 5 minutes", resp.StatusCode)
 	}
 }
+
+// TestForwardedChainSpansRepeatedHeaders is the regression test for reading
+// X-Forwarded-For with Header.Get.
+//
+// The header may legitimately appear more than once -- a proxy that APPENDS
+// its own line rather than coalescing into the client's is compliant -- and
+// Get returns only the first. The right-to-left resolver then walked a chain
+// consisting entirely of the client's own fabrication, never saw the address
+// the proxy added, and returned whatever the client asked for.
+func TestForwardedChainSpansRepeatedHeaders(t *testing.T) {
+	cfg := &TrustedProxyConfig{TrustedProxies: []string{"10.0.0.0/8"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.1:1234" // the trusted proxy
+	// What the client sent...
+	req.Header.Add("X-Forwarded-For", "1.2.3.4")
+	// ...and the line the proxy appended, carrying the real peer.
+	req.Header.Add("X-Forwarded-For", "203.0.113.9")
+
+	if got := GetClientIP(req, cfg); got != "203.0.113.9" {
+		t.Errorf("GetClientIP = %q, want 203.0.113.9; the proxy-added header line was ignored", got)
+	}
+
+	// A single coalesced header is unchanged.
+	one := httptest.NewRequest(http.MethodGet, "/", nil)
+	one.RemoteAddr = "10.0.0.1:1234"
+	one.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.9")
+	if got := GetClientIP(one, cfg); got != "203.0.113.9" {
+		t.Errorf("GetClientIP(coalesced) = %q, want 203.0.113.9", got)
+	}
+
+	// X-Real-IP takes the LAST line for the same reason.
+	real := httptest.NewRequest(http.MethodGet, "/", nil)
+	real.RemoteAddr = "10.0.0.1:1234"
+	real.Header.Add("X-Real-IP", "1.2.3.4")     // the client's
+	real.Header.Add("X-Real-IP", "203.0.113.9") // the proxy's
+	if got := GetClientIP(real, cfg); got != "203.0.113.9" {
+		t.Errorf("GetClientIP(X-Real-IP) = %q, want 203.0.113.9; the client's line won", got)
+	}
+}

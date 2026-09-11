@@ -225,8 +225,8 @@ func GetClientIP(r *http.Request, trustedConfig *TrustedProxyConfig) string {
 	}
 
 	return trustedConfig.clientIPFromForwarded(
-		r.Header.Get("X-Forwarded-For"),
-		r.Header.Get("X-Real-IP"),
+		joinForwarded(r.Header.Values("X-Forwarded-For")),
+		lastHeaderValue(r.Header.Values("X-Real-IP")),
 		remoteIP,
 	)
 }
@@ -251,10 +251,57 @@ func GetClientIPFiber(c fiber.Ctx, trustedConfig *TrustedProxyConfig) string {
 	}
 
 	return trustedConfig.clientIPFromForwarded(
-		c.Get("X-Forwarded-For"),
-		c.Get("X-Real-IP"),
+		joinForwarded(peekAllStrings(c, "X-Forwarded-For")),
+		lastHeaderValue(peekAllStrings(c, "X-Real-IP")),
 		remoteIP,
 	)
+}
+
+// joinForwarded splices every X-Forwarded-For field into one chain, in wire
+// order.
+//
+// The header may legitimately appear more than once: a proxy that APPENDS its
+// own line instead of coalescing into the client's is compliant, and RFC 9110
+// says the two forms are equivalent. Header.Get returns only the FIRST line,
+// so in that deployment the resolver walked a chain consisting of nothing but
+// the client's own fabrication -- the proxy-added address was never in it, and
+// the right-to-left rule that makes this function spoof-resistant had nothing
+// to work with. Every control keyed on it (allow-lists, per-IP rate limits)
+// was bypassable by sending a single X-Forwarded-For header.
+func joinForwarded(values []string) string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			out = append(out, v)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// lastHeaderValue returns the last non-empty value of a single-valued header.
+//
+// The LAST, for the same reason: a proxy that appends rather than overwrites
+// puts its own value after whatever the client sent, so the final line is the
+// one attributable to the trusted hop. Where the proxy overwrites, there is
+// only one and this is the same value Get would return.
+func lastHeaderValue(values []string) string {
+	for i := len(values) - 1; i >= 0; i-- {
+		if strings.TrimSpace(values[i]) != "" {
+			return values[i]
+		}
+	}
+	return ""
+}
+
+// peekAllStrings returns every value of a request header from a Fiber context.
+// fasthttp's Peek -- which c.Get uses -- returns only the first.
+func peekAllStrings(c fiber.Ctx, name string) []string {
+	raw := c.RequestCtx().Request.Header.PeekAll(name)
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		out = append(out, string(v))
+	}
+	return out
 }
 
 // getRemoteIP extracts and parses the IP from a remote address string.
