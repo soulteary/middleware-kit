@@ -25,52 +25,57 @@ type RateLimiter struct {
 	stopOnce     sync.Once
 }
 
-// visitor tracks request counts for a single IP/key using a two-bucket
-// weighted sliding window.
+// visitor records the timestamps of a single IP/key's recent requests.
 //
-// A plain fixed window -- reset the counter every Window -- admits almost
-// twice the configured rate across a boundary: Rate-1 requests just before it
-// and another Rate immediately after, in an arbitrarily short interval. The
-// previous window's count is therefore carried and weighted by how much of it
-// still overlaps the trailing Window, so no interval of Window can exceed
-// Rate, with O(1) memory per visitor.
+// An EXACT sliding window: the timestamps of the requests still inside the
+// trailing Window are kept, so no interval of Window can ever exceed Rate.
+//
+// A fixed window -- reset the counter every Window -- admits almost twice the
+// configured rate across a boundary. Weighting the previous window's count by
+// how much of it still overlaps fixes the worst of that but is only an
+// estimate: it assumes the previous window's requests were spread evenly, so a
+// burst concentrated at its end is undercounted and more requests get through
+// than Rate. Keeping the timestamps costs at most Rate int64s per visitor and
+// removes the approximation entirely.
 type visitor struct {
-	// count is the number of requests in the current window.
-	count int
-
-	// prevCount is the number of requests in the window before it.
-	prevCount int
-
-	// windowStart is when the current counting window opened.
-	windowStart time.Time
+	// stamps is a ring buffer of up to Rate request times, oldest at head.
+	stamps []int64
+	head   int
+	count  int
 
 	// lastSeen is only used for eviction bookkeeping.
 	lastSeen time.Time
 }
 
-// estimate returns the weighted request count over the trailing window, having
-// first rolled the visitor forward to the window containing now.
-func (v *visitor) estimate(now time.Time, window time.Duration) float64 {
-	elapsed := now.Sub(v.windowStart)
+// allow records a request at now if the trailing window has room for it.
+func (v *visitor) allow(now time.Time, window time.Duration, rate int) bool {
+	cutoff := now.Add(-window).UnixNano()
 
-	switch {
-	case elapsed >= 2*window:
-		// Idle for a whole window: nothing to carry.
-		v.prevCount = 0
-		v.count = 0
-		v.windowStart = now.Truncate(window)
-	case elapsed >= window:
-		v.prevCount = v.count
-		v.count = 0
-		v.windowStart = v.windowStart.Add(window)
+	// Drop the timestamps that have left the trailing window. They are in
+	// ascending order, so this stops at the first one still inside it.
+	for v.count > 0 && v.stamps[v.head] <= cutoff {
+		v.head = (v.head + 1) % len(v.stamps)
+		v.count--
 	}
 
-	// Fraction of the previous window still inside the trailing window.
-	overlap := 1 - float64(now.Sub(v.windowStart))/float64(window)
-	if overlap < 0 {
-		overlap = 0
+	if v.count >= rate {
+		return false
 	}
-	return float64(v.prevCount)*overlap + float64(v.count)
+
+	v.stamps[(v.head+v.count)%len(v.stamps)] = now.UnixNano()
+	v.count++
+	return true
+}
+
+// newVisitor allocates a visitor able to hold one full window of requests.
+func newVisitor(now time.Time, rate int) *visitor {
+	if rate < 1 {
+		rate = 1
+	}
+	v := &visitor{stamps: make([]int64, rate), lastSeen: now}
+	v.stamps[0] = now.UnixNano()
+	v.count = 1
+	return v
 }
 
 // RateLimiterConfig configures the rate limiter.
@@ -211,28 +216,19 @@ func (rl *RateLimiter) Allow(key string) bool {
 		if len(rl.visitors) >= rl.maxVisitors {
 			rl.cleanupOldestVisitors()
 		}
-		rl.visitors[key] = &visitor{
-			count:       1,
-			windowStart: now.Truncate(rl.window),
-			lastSeen:    now,
-		}
+		rl.visitors[key] = newVisitor(now, rl.rate)
 		return true
 	}
 
 	v.lastSeen = now
 
-	// The window rolls over on schedule, not only after an idle gap. Comparing
-	// against lastSeen -- refreshed on every allowed request -- meant a client
-	// sending faster than one request per window never rolled over at all: the
-	// counter only ever grew, so "100 per minute" actually meant "100
-	// requests, then a full minute of silence", and a steady 1 req/s client
-	// was blocked at the 100th second.
-	if v.estimate(now, rl.window) >= float64(rl.rate) {
-		return false
-	}
-
-	v.count++
-	return true
+	// Requests leave the window on schedule, not only after an idle gap. The
+	// original code compared against lastSeen -- refreshed on every allowed
+	// request -- so a client sending faster than one request per window never
+	// rolled over at all: the counter only ever grew, and "100 per minute"
+	// actually meant "100 requests, then a full minute of silence". A steady
+	// 1 req/s client was blocked at the 100th second.
+	return v.allow(now, rl.window, rl.rate)
 }
 
 // AddToWhitelist adds a key to the whitelist.

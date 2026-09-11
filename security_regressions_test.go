@@ -164,13 +164,21 @@ func TestMemoryReplayGuard(t *testing.T) {
 	if g.Seen("sig-2", time.Minute) {
 		t.Error("a different signature reported as a replay")
 	}
-	// Entries expire, so a guard does not grow without bound.
-	if g.Seen("sig-3", time.Nanosecond) {
+	// An entry expires after ITS OWN ttl, so a guard does not grow without
+	// bound.
+	if g.Seen("sig-3", time.Millisecond) {
 		t.Error("first use of sig-3 reported as a replay")
 	}
-	time.Sleep(2 * time.Millisecond)
-	if g.Seen("sig-1", time.Nanosecond) {
-		t.Error("expired entry still reported as a replay")
+	time.Sleep(5 * time.Millisecond)
+	if g.Seen("sig-3", time.Millisecond) {
+		t.Error("an entry past its own ttl still reported as a replay")
+	}
+
+	// ...and only its own. A later caller passing a short ttl must not evict
+	// an entry stored with a long one: this test used to assert the opposite,
+	// which is the cross-contamination the per-entry expiry removes.
+	if !g.Seen("sig-1", time.Nanosecond) {
+		t.Error("an entry stored with a one-minute ttl was dropped by a later one-nanosecond caller; it is still replayable within its own window")
 	}
 }
 
@@ -421,59 +429,131 @@ func TestFiberReplayGuardRunsAfterTheSignatureCheck(t *testing.T) {
 	}
 }
 
-// TestSlidingWindowHasNoBoundaryBurst is the regression test for resetting the
-// whole counter at windowStart+window. That is a fixed window: a client could
-// send Rate-1 requests just before the boundary and another Rate immediately
-// after, admitting almost twice the configured limit in a very short interval.
-func TestSlidingWindowHasNoBoundaryBurst(t *testing.T) {
+// TestSlidingWindowIsExact is the regression test for the window algorithm.
+//
+// A fixed window admitted almost 2x Rate across a boundary. The weighted
+// two-bucket replacement narrowed that but was still an estimate: it assumes
+// the previous window's requests were spread evenly, so a burst concentrated
+// at its end is undercounted. This asserts the property directly -- NO
+// interval of Window ever contains more than Rate admitted requests.
+func TestSlidingWindowIsExact(t *testing.T) {
 	const rate = 10
 	window := time.Second
 
-	v := &visitor{}
-	start := time.Now().Truncate(window)
-	v.windowStart = start
+	start := time.Now()
+	v := newVisitor(start, rate)
+	admitted := []time.Time{start}
 
-	allowed := func(now time.Time) bool {
-		if v.estimate(now, window) >= float64(rate) {
-			return false
+	allow := func(at time.Time) bool {
+		if v.allow(at, window, rate) {
+			admitted = append(admitted, at)
+			return true
 		}
-		v.count++
-		return true
+		return false
 	}
 
-	// Fill the first window right at its end.
+	// Fill the rest of the budget right at the end of the first window, the
+	// burst shape the weighted estimate undercounted.
 	late := start.Add(window - time.Millisecond)
-	for i := 0; i < rate; i++ {
-		if !allowed(late) {
-			t.Fatalf("request %d in the first window was refused", i)
+	for i := 1; i < rate; i++ {
+		if !allow(late) {
+			t.Fatalf("request %d inside the first window was refused", i)
 		}
 	}
-	if allowed(late) {
-		t.Fatal("the limiter admitted more than Rate inside one window")
+	if allow(late) {
+		t.Fatal("more than Rate admitted inside one window")
 	}
 
-	// Immediately after the boundary the previous window still overlaps almost
-	// entirely, so the budget must NOT reset. A fixed window admitted another
-	// full Rate here; a weighted sliding window admits at most a trickle.
-	justAfter := start.Add(window + time.Millisecond)
-	burst := 0
-	for i := 0; i < rate; i++ {
-		if allowed(justAfter) {
-			burst++
+	// Codex's counter-example: step through the following window and keep
+	// asking. The exact window must never let a trailing Window exceed Rate.
+	for step := 1; step <= 20; step++ {
+		allow(start.Add(window + time.Duration(step)*window/10))
+	}
+
+	// Verify the invariant directly over every admitted request.
+	for i, at := range admitted {
+		n := 0
+		for _, other := range admitted {
+			if !other.Before(at) && other.Before(at.Add(window)) {
+				n++
+			}
+		}
+		if n > rate {
+			t.Fatalf("%d requests admitted in the window starting at admitted[%d]; Rate is %d", n, i, rate)
 		}
 	}
-	if burst > 1 {
-		t.Errorf("%d requests admitted immediately after the window boundary, want at most 1: this is a fixed window, not a sliding one", burst)
+
+	// The limiter still recovers: a full window after the last admitted
+	// request, the budget is back.
+	last := admitted[len(admitted)-1]
+	if !allow(last.Add(window)) {
+		t.Error("the limiter never recovered a full window after the last request")
+	}
+}
+
+// TestRateLimiterAllowsASteadyClient guards the original fix: a client sending
+// faster than one request per window must still roll over.
+func TestRateLimiterAllowsASteadyClient(t *testing.T) {
+	const rate = 10
+	window := 100 * time.Millisecond
+
+	now := time.Now()
+	v := newVisitor(now, rate)
+
+	// One request every window/rate, sustained: exactly at the limit, so all
+	// of them must pass.
+	for i := 1; i <= 100; i++ {
+		at := now.Add(time.Duration(i) * window / rate)
+		if !v.allow(at, window, rate) {
+			t.Fatalf("steady request %d refused; the window is not rolling over", i)
+		}
+	}
+}
+
+// TestDefaultSignerKeepsTheColonGuard is the regression test for inferring the
+// encoding AFTER the constructors applied their default. HMACAuth and
+// HMACAuthStd assigned ComputeHMAC to cfg.SignatureFunc before the handler
+// ran, so serviceAllowed saw a non-nil function, called the plain default
+// configuration a "custom signer", and let ':' back into the service header --
+// reopening the collision where a signature for service "a" with body "b:c"
+// also authenticates service "a:b" with body "c".
+func TestDefaultSignerKeepsTheColonGuard(t *testing.T) {
+	const secret = "s3cr3t"
+
+	// The forged pair: ("a", "b:c") and ("a:b", "c") sign identically under
+	// ComputeHMAC's "timestamp:service:body" form.
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := ComputeHMAC(ts, "a", "b:c", secret)
+	if sig != ComputeHMAC(ts, "a:b", "c", secret) {
+		t.Fatal("the legacy encoding is no longer ambiguous; this test needs updating")
 	}
 
-	// The bound that matters: no interval of Window admits more than Rate.
-	// Across the boundary that is the late burst plus whatever just passed.
-	if total := rate + burst; total > rate+1 {
-		t.Errorf("%d requests admitted within one window across the boundary, want at most %d", total, rate)
+	send := func(h http.Handler) int {
+		req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader("c"))
+		req.Header.Set("X-Timestamp", ts)
+		req.Header.Set("X-Service", "a:b") // the shifted service
+		req.Header.Set("X-Signature", sig)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
 	}
 
-	// A full window later the budget is back.
-	if !allowed(start.Add(2 * window)) {
-		t.Error("the limiter never recovered after a full window")
+	// Default configuration: the guard must still reject the shifted service.
+	std := HMACAuthStd(HMACConfig{Secret: secret, MaxTimeDrift: time.Hour})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	if got := send(std); got == http.StatusOK {
+		t.Error("a service identifier containing ':' was accepted under the default signer")
+	}
+
+	// An explicitly configured unambiguous signer is still allowed to use ':'.
+	bound := HMACConfig{Secret: secret, MaxTimeDrift: time.Hour, RequestSignatureFunc: ComputeHMACBound}
+	if !bound.serviceAllowed("a:b") {
+		t.Error("the length-prefixed encoding had the legacy service policy imposed on it")
+	}
+	if bound.usesLegacyEncoding() {
+		t.Error("a configured RequestSignatureFunc was reported as the legacy encoding")
+	}
+	if !(HMACConfig{Secret: secret}).usesLegacyEncoding() {
+		t.Error("the default configuration was not reported as the legacy encoding")
 	}
 }

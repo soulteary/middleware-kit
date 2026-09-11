@@ -102,10 +102,23 @@ func validService(service string) bool {
 // applying it there rejected service identifiers that had always been valid
 // and answered previously working clients with 401.
 func (cfg HMACConfig) serviceAllowed(service string) bool {
-	if cfg.RequestSignatureFunc != nil || cfg.SignatureFunc != nil {
-		return true
+	if cfg.usesLegacyEncoding() {
+		return validService(service)
 	}
-	return validService(service)
+	return true
+}
+
+// usesLegacyEncoding reports whether signatures are computed with
+// ComputeHMAC's ambiguous "timestamp:service:body" form.
+//
+// This must be decided from what the CALLER supplied. The middleware
+// constructors used to assign the default ComputeHMAC to cfg.SignatureFunc
+// before the request handler ran, so asking "is SignatureFunc non-nil?" said
+// "custom signer" for the plain default configuration and let ':' through.
+// They no longer materialize that default; expectedSignature falls back to
+// ComputeHMAC on its own.
+func (cfg HMACConfig) usesLegacyEncoding() bool {
+	return cfg.RequestSignatureFunc == nil && cfg.SignatureFunc == nil
 }
 
 // replayRetention is how long a ReplayGuard must remember a signature.
@@ -141,9 +154,27 @@ type ReplayGuard interface {
 // needs a shared store (Redis SET NX with a TTL, for example), otherwise a
 // request replayed to a different instance is not detected.
 type MemoryReplayGuard struct {
-	mu   sync.Mutex
+	mu sync.Mutex
+
+	// seen maps a signature to ITS OWN expiry, not to when it was recorded.
+	//
+	// Storing the insertion time and comparing it against the caller's ttl
+	// applied whichever ttl the CURRENT request happened to carry to every
+	// stored entry, so one guard shared by middlewares with different
+	// MaxTimeDrift values dropped a ten-minute entry as soon as a one-second
+	// caller swept -- and that signature became replayable again while still
+	// inside its own validity window.
 	seen map[string]time.Time
+
+	// nextSweep bounds how often the map is scanned. Sweeping on every call
+	// made Seen O(len(seen)): at the default ten-minute retention and 1000
+	// requests/second the map holds ~600k entries and every authenticated
+	// request walked all of them.
+	nextSweep time.Time
 }
+
+// replaySweepInterval is the minimum gap between full sweeps.
+const replaySweepInterval = 30 * time.Second
 
 // NewMemoryReplayGuard returns an empty in-process replay guard.
 func NewMemoryReplayGuard() *MemoryReplayGuard {
@@ -151,24 +182,31 @@ func NewMemoryReplayGuard() *MemoryReplayGuard {
 }
 
 // Seen records id and reports whether it had been seen before.
+//
+// ttl is the full retention the caller asks for -- see replayRetention, which
+// doubles MaxTimeDrift to cover a signature's whole validity period rather
+// than just the drift. It applies to THIS id only.
 func (g *MemoryReplayGuard) Seen(id string, ttl time.Duration) bool {
 	now := time.Now()
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	// Opportunistic expiry. ttl is the full retention the caller asks for --
-	// see replayRetention, which doubles MaxTimeDrift to cover a signature's
-	// whole validity period rather than just the drift.
-	for k, t := range g.seen {
-		if now.Sub(t) > ttl {
-			delete(g.seen, k)
-		}
-	}
-
-	if _, exists := g.seen[id]; exists {
+	if expires, exists := g.seen[id]; exists && now.Before(expires) {
 		return true
 	}
-	g.seen[id] = now
+
+	g.seen[id] = now.Add(ttl)
+
+	// Amortized cleanup: a full scan at most every replaySweepInterval,
+	// rather than on every request.
+	if now.After(g.nextSweep) {
+		for k, expires := range g.seen {
+			if now.After(expires) {
+				delete(g.seen, k)
+			}
+		}
+		g.nextSweep = now.Add(replaySweepInterval)
+	}
 	return false
 }

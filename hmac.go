@@ -119,9 +119,13 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 	if cfg.MaxTimeDrift == 0 {
 		cfg.MaxTimeDrift = 5 * time.Minute
 	}
-	if cfg.SignatureFunc == nil {
-		cfg.SignatureFunc = ComputeHMAC
-	}
+	// SignatureFunc is deliberately NOT defaulted to ComputeHMAC here.
+	//
+	// expectedSignature already falls back to it, and materializing the
+	// default made serviceAllowed see a non-nil function and mistake the
+	// legacy delimiter-based signer for a caller-supplied custom one -- which
+	// re-allowed ':' in the service header and reopened the collision that
+	// check exists to close.
 
 	return func(c fiber.Ctx) error {
 		// Get signature and timestamp from headers
@@ -275,9 +279,13 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 	if cfg.MaxTimeDrift == 0 {
 		cfg.MaxTimeDrift = 5 * time.Minute
 	}
-	if cfg.SignatureFunc == nil {
-		cfg.SignatureFunc = ComputeHMAC
-	}
+	// SignatureFunc is deliberately NOT defaulted to ComputeHMAC here.
+	//
+	// expectedSignature already falls back to it, and materializing the
+	// default made serviceAllowed see a non-nil function and mistake the
+	// legacy delimiter-based signer for a caller-supplied custom one -- which
+	// re-allowed ':' in the service header and reopened the collision that
+	// check exists to close.
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
