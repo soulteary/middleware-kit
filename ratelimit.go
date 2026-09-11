@@ -25,16 +25,52 @@ type RateLimiter struct {
 	stopOnce     sync.Once
 }
 
-// visitor tracks request counts for a single IP/key.
+// visitor tracks request counts for a single IP/key using a two-bucket
+// weighted sliding window.
+//
+// A plain fixed window -- reset the counter every Window -- admits almost
+// twice the configured rate across a boundary: Rate-1 requests just before it
+// and another Rate immediately after, in an arbitrarily short interval. The
+// previous window's count is therefore carried and weighted by how much of it
+// still overlaps the trailing Window, so no interval of Window can exceed
+// Rate, with O(1) memory per visitor.
 type visitor struct {
+	// count is the number of requests in the current window.
 	count int
-	// windowStart is when the current counting window opened. Keeping this
-	// separate from lastSeen is what makes the limiter a real "N per window":
-	// the window must roll over on schedule, not only after an idle gap.
+
+	// prevCount is the number of requests in the window before it.
+	prevCount int
+
+	// windowStart is when the current counting window opened.
 	windowStart time.Time
 
 	// lastSeen is only used for eviction bookkeeping.
 	lastSeen time.Time
+}
+
+// estimate returns the weighted request count over the trailing window, having
+// first rolled the visitor forward to the window containing now.
+func (v *visitor) estimate(now time.Time, window time.Duration) float64 {
+	elapsed := now.Sub(v.windowStart)
+
+	switch {
+	case elapsed >= 2*window:
+		// Idle for a whole window: nothing to carry.
+		v.prevCount = 0
+		v.count = 0
+		v.windowStart = now.Truncate(window)
+	case elapsed >= window:
+		v.prevCount = v.count
+		v.count = 0
+		v.windowStart = v.windowStart.Add(window)
+	}
+
+	// Fraction of the previous window still inside the trailing window.
+	overlap := 1 - float64(now.Sub(v.windowStart))/float64(window)
+	if overlap < 0 {
+		overlap = 0
+	}
+	return float64(v.prevCount)*overlap + float64(v.count)
 }
 
 // RateLimiterConfig configures the rate limiter.
@@ -177,7 +213,7 @@ func (rl *RateLimiter) Allow(key string) bool {
 		}
 		rl.visitors[key] = &visitor{
 			count:       1,
-			windowStart: now,
+			windowStart: now.Truncate(rl.window),
 			lastSeen:    now,
 		}
 		return true
@@ -185,21 +221,13 @@ func (rl *RateLimiter) Allow(key string) bool {
 
 	v.lastSeen = now
 
-	// Roll the window over once it has elapsed since it opened.
-	//
-	// This used to compare against lastSeen, which was refreshed on every
-	// allowed request. A client sending faster than one request per window
-	// therefore never rolled over: the counter only ever grew, so "100 per
-	// minute" actually meant "100 requests, then a full minute of silence".
-	// A steady 1 req/s client was blocked at the 100th second.
-	if now.Sub(v.windowStart) >= rl.window {
-		v.count = 1
-		v.windowStart = now
-		return true
-	}
-
-	// Check if over limit
-	if v.count >= rl.rate {
+	// The window rolls over on schedule, not only after an idle gap. Comparing
+	// against lastSeen -- refreshed on every allowed request -- meant a client
+	// sending faster than one request per window never rolled over at all: the
+	// counter only ever grew, so "100 per minute" actually meant "100
+	// requests, then a full minute of silence", and a steady 1 req/s client
+	// was blocked at the 100th second.
+	if v.estimate(now, rl.window) >= float64(rl.rate) {
 		return false
 	}
 

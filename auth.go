@@ -166,13 +166,14 @@ func validateHMAC(c fiber.Ctx, cfg HMACConfig) bool {
 		return false
 	}
 
-	if !validService(service) {
+	if !cfg.serviceAllowed(service) {
 		return false
 	}
 
 	expectedSig := cfg.expectedSignature(SignatureInput{
-		Method:    c.Method(),
-		Path:      c.Path(),
+		Method: c.Method(),
+		// The ESCAPED path: see SignatureInput.Path.
+		Path:      string(c.RequestCtx().URI().PathOriginal()),
 		RawQuery:  string(c.RequestCtx().URI().QueryString()),
 		Timestamp: timestamp,
 		Service:   service,
@@ -184,7 +185,11 @@ func validateHMAC(c fiber.Ctx, cfg HMACConfig) bool {
 		return false
 	}
 
-	if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, cfg.MaxTimeDrift) {
+	// The NORMALIZED drift, not cfg.MaxTimeDrift. With the documented zero
+	// value, validation above computed a five-minute default while this call
+	// passed 0, so MemoryReplayGuard expired the entry on the very next
+	// request and enabling ReplayGuard prevented no replay at all.
+	if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, replayRetention(maxDrift)) {
 		return false
 	}
 

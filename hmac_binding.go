@@ -17,7 +17,15 @@ import (
 // other endpoint that accepts the same body. RequestSignatureFunc receives the
 // request target as well so the signature can be bound to it.
 type SignatureInput struct {
-	Method    string
+	Method string
+
+	// Path is the request target's ESCAPED path, not the decoded one.
+	//
+	// Decoding first collapses distinct targets: "/a/b" and "/a%2Fb" both
+	// decode to "/a/b" and would sign identically, while net/http's ServeMux
+	// routes the first to "/a/b" and the second to a single-segment
+	// "/{x}" handler -- so a signature authorized for one route would
+	// authenticate a different one.
 	Path      string
 	RawQuery  string
 	Timestamp string
@@ -84,6 +92,36 @@ func validService(service string) bool {
 	return !strings.Contains(service, ":")
 }
 
+// serviceAllowed reports whether service may be used with cfg's signature
+// function.
+//
+// The ":" restriction exists only because ComputeHMAC's
+// "timestamp:service:body" form has no field boundaries. It does NOT apply to
+// ComputeHMACBound, whose length-prefixed encoding cannot be shifted, nor to a
+// caller's own SignatureFunc, which has its own encoding and its own rules --
+// applying it there rejected service identifiers that had always been valid
+// and answered previously working clients with 401.
+func (cfg HMACConfig) serviceAllowed(service string) bool {
+	if cfg.RequestSignatureFunc != nil || cfg.SignatureFunc != nil {
+		return true
+	}
+	return validService(service)
+}
+
+// replayRetention is how long a ReplayGuard must remember a signature.
+//
+// Timestamps are accepted symmetrically around now, so a request stamped
+// maxDrift in the FUTURE is accepted immediately and stays acceptable until
+// maxDrift after that -- almost two drifts of total validity. Retaining an
+// entry for only one drift let the same captured request through a second
+// time once the first retention elapsed.
+func replayRetention(maxDrift time.Duration) time.Duration {
+	if maxDrift <= 0 {
+		return 0
+	}
+	return 2 * maxDrift
+}
+
 // ReplayGuard records request identities that have already been accepted, so a
 // captured request cannot be replayed within the timestamp window.
 //
@@ -119,7 +157,9 @@ func (g *MemoryReplayGuard) Seen(id string, ttl time.Duration) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	// Opportunistic expiry: entries are only useful for one ttl.
+	// Opportunistic expiry. ttl is the full retention the caller asks for --
+	// see replayRetention, which doubles MaxTimeDrift to cover a signature's
+	// whole validity period rather than just the drift.
 	for k, t := range g.seen {
 		if now.Sub(t) > ttl {
 			delete(g.seen, k)

@@ -185,22 +185,10 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 
 		// A service identifier carrying the legacy encoding's delimiter would
 		// let one signature stand for two different (service, body) pairs.
-		if !validService(service) {
+		// Only the legacy encoding is ambiguous; see serviceAllowed.
+		if !cfg.serviceAllowed(service) {
 			if cfg.Logger != nil {
 				cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
-			}
-			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
-		}
-
-		// Reject a signature that has already been accepted. The timestamp
-		// window bounds how long a captured request stays useful; it does not
-		// stop it being replayed within that window.
-		if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, cfg.MaxTimeDrift) {
-			if cfg.Logger != nil {
-				cfg.Logger.Warn().
-					Str("ip", GetClientIPFiber(c, cfg.TrustedProxyConfig)).
-					Str("path", c.Path()).
-					Msg("HMAC authentication failed: signature replayed")
 			}
 			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
 		}
@@ -208,8 +196,11 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 		// Compute expected signature
 		body := string(c.Body())
 		expectedSig := cfg.expectedSignature(SignatureInput{
-			Method:    c.Method(),
-			Path:      c.Path(),
+			Method: c.Method(),
+			// The ESCAPED path: see SignatureInput.Path. c.Path() is decoded,
+			// so "/a/b" and "/a%2Fb" sign identically while routing to
+			// different handlers.
+			Path:      string(c.RequestCtx().URI().PathOriginal()),
 			RawQuery:  string(c.RequestCtx().URI().QueryString()),
 			Timestamp: timestamp,
 			Service:   service,
@@ -227,6 +218,25 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 					Str("method", c.Method()).
 					Str("service", service).
 					Msg("HMAC authentication failed: signature mismatch")
+			}
+			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
+		}
+
+		// Reject a signature that has already been accepted. The timestamp
+		// window bounds how long a captured request stays useful; it does not
+		// stop it being replayed within that window.
+		//
+		// This runs AFTER the signature check, as the standard and combined
+		// implementations do. Recording first meant a request carrying a valid
+		// signature header but an altered body -- which is rejected anyway --
+		// consumed that signature, so the legitimate request that followed was
+		// refused as a replay.
+		if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, replayRetention(cfg.MaxTimeDrift)) {
+			if cfg.Logger != nil {
+				cfg.Logger.Warn().
+					Str("ip", GetClientIPFiber(c, cfg.TrustedProxyConfig)).
+					Str("path", c.Path()).
+					Msg("HMAC authentication failed: signature replayed")
 			}
 			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
 		}
@@ -344,7 +354,7 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			if !validService(service) {
+			if !cfg.serviceAllowed(service) {
 				if cfg.Logger != nil {
 					cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
 				}
@@ -354,8 +364,9 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 
 			// Compute expected signature
 			expectedSig := cfg.expectedSignature(SignatureInput{
-				Method:    r.Method,
-				Path:      r.URL.Path,
+				Method: r.Method,
+				// The ESCAPED path: see SignatureInput.Path.
+				Path:      r.URL.EscapedPath(),
 				RawQuery:  r.URL.RawQuery,
 				Timestamp: timestamp,
 				Service:   service,
@@ -378,7 +389,7 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, cfg.MaxTimeDrift) {
+			if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, replayRetention(cfg.MaxTimeDrift)) {
 				if cfg.Logger != nil {
 					cfg.Logger.Warn().
 						Str("ip", GetClientIP(r, cfg.TrustedProxyConfig)).
