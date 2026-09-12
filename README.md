@@ -88,11 +88,73 @@ app.Use(middleware.HMACAuth(middleware.HMACConfig{
     MaxTimeDrift: 5 * time.Minute,
 }))
 
-// Computing HMAC signature on client side
+// Computing the signature on the client side
 timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 signature := middleware.ComputeHMAC(timestamp, "service-name", requestBody, secret)
-// Set headers: X-Signature, X-Timestamp, X-Service, X-Key-Id (optional)
+// Headers: X-Signature, X-Timestamp, X-Service, X-Key-Id (optional)
 ```
+
+#### Binding the signature to the request
+
+The default signed message is `timestamp:service:body`. It covers **neither the
+method nor the path**, so a signature minted for `POST /transfer` is equally
+valid on `POST /delete-account` with the same body.
+
+`ComputeHMACBound` signs the method, path and query as well, and length-prefixes
+every field so the encoding is injective. Changing the signed bytes breaks every
+deployed signer at once, so it is opt-in:
+
+```go
+app.Use(middleware.HMACAuth(middleware.HMACConfig{
+    Secret:               "your-hmac-secret",
+    RequestSignatureFunc: middleware.ComputeHMACBound,
+}))
+```
+
+Clients sign the same way:
+
+```go
+signature := middleware.ComputeHMACBound(middleware.SignatureInput{
+    Timestamp: timestamp,
+    Service:   "service-name",
+    Method:    req.Method,
+    Path:      req.URL.Path,
+    RawQuery:  req.URL.RawQuery,
+    Body:      string(body),
+    Secret:    secret,
+})
+```
+
+The legacy encoding is made safe in place: because `service` comes from a
+client-supplied header and the old format is not injective, a signature for
+(`service` `"a"`, `body` `"b:c"`) could be presented as (`service` `"a:b"`,
+`body` `"c"`). A service identifier containing the delimiter is now rejected. Set
+`AllowDelimitersInService` only if you have a deployed signer that needs it.
+
+#### Replay protection
+
+The timestamp window bounds how long a captured request stays useful — it does
+not stop the request being replayed inside that window. Without a guard, every
+signed request is replayable for `MaxTimeDrift`:
+
+```go
+app.Use(middleware.HMACAuth(middleware.HMACConfig{
+    Secret:      "your-hmac-secret",
+    ReplayGuard: middleware.NewMemoryReplayGuard(), // single instance
+}))
+```
+
+`ReplayGuard` is an interface, so a multi-instance deployment can back it with
+shared storage:
+
+```go
+type ReplayGuard interface {
+    // Seen reports whether id has been accepted before, and records it for ttl.
+    Seen(id string, ttl time.Duration) bool
+}
+```
+
+### mTLS Client Certificate Authentication
 
 ### mTLS Client Certificate Authentication
 
@@ -122,6 +184,18 @@ app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
 }))
 ```
 
+**A certificate must have been verified by the TLS layer.**
+`tls.ConnectionState.PeerCertificates` is populated whenever the peer *sends* a
+certificate, and with `tls.RequestClientCert` or `tls.RequireAnyClientCert` the
+server verifies nothing — so a self-signed certificate would pass, and since its
+Subject is chosen by whoever generated it, a CN allow-list on top gives no
+protection either. Authentication requires a non-empty `VerifiedChains`; configure
+your `tls.Config` with `ClientAuth: tls.RequireAndVerifyClientCert` and a
+`ClientCAs` pool.
+
+An unverified certificate is rejected with `ErrMTLSCertificateUnverified`.
+Failure reasons are wrapped, so logs keep naming the specific cause.
+
 ### Combined Authentication
 
 ```go
@@ -138,6 +212,11 @@ app.Use(middleware.CombinedAuth(middleware.AuthConfig{
     },
 }))
 ```
+
+`CombinedAuth`'s mTLS branch runs the same check as the dedicated `MTLSAuth`
+middleware, including `AllowedCNs`, `AllowedOUs`, `AllowedDNSSANs` and
+`CertValidator`, so the combined middleware cannot accept what the dedicated one
+rejects.
 
 ### Rate Limiting
 
@@ -166,6 +245,10 @@ app.Use(middleware.RateLimit(middleware.RateLimitConfig{
     },
 }))
 ```
+
+The in-memory limiter tracks the window start separately from the eviction
+timestamp, so an active client rolls over on schedule: "100 per minute" means
+100 requests in any minute, not "100 requests then a full minute of silence".
 
 ### Security Headers
 
@@ -233,25 +316,39 @@ app.Use(middleware.RequestLogging(middleware.LoggingConfig{
 ### Client IP Detection
 
 ```go
-// With trusted proxy configuration
+// Always build the config with the constructor
 trustedProxies := middleware.NewTrustedProxyConfig([]string{
     "10.0.0.0/8",
     "192.168.1.1",
 })
 
-// In Fiber handler
+// In a Fiber handler
 app.Get("/", func(c fiber.Ctx) error {
     clientIP := middleware.GetClientIPFiber(c, trustedProxies)
     return c.SendString("Your IP: " + clientIP)
 })
 
-// In standard HTTP handler
+// In a standard HTTP handler
 http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
     clientIP := middleware.GetClientIP(r, trustedProxies)
     fmt.Fprintf(w, "Your IP: %s", clientIP)
 })
 ```
 
+`X-Forwarded-For` is **walked from the right**, skipping hops that are themselves
+trusted proxies, and stops at the first untrusted address. That is the only
+reading that is not spoofable: a client sends `X-Forwarded-For: 1.2.3.4`, the
+proxy *appends* the real address to the right of it, and the forged value stays
+leftmost. `X-Real-IP` is used only when no usable chain is present.
+
+Every control keyed on this function — the IP allow-list, per-IP rate limiting,
+audit logs — is only as trustworthy as `TrustedProxies`, so set it to your actual
+proxies. With nothing configured, private addresses are trusted.
+
+IPv6 unique local addresses (`fc00::/7`) count as private, so an all-IPv6
+deployment trusts its own proxies.
+
+### Data Masking Utilities
 ### Data Masking Utilities
 
 ```go
@@ -328,9 +425,59 @@ middleware-kit/
 └── *_test.go           # Comprehensive tests
 ```
 
+## Upgrade Notes (v2.2.0)
+
+**Three of these reject requests that previously authenticated.** Read the mTLS
+and HMAC items before upgrading a live deployment.
+
+- **mTLS requires a TLS-verified certificate.** Both `MTLSAuth` and
+  `CombinedAuth` accepted any certificate the peer *sent*, because
+  `PeerCertificates` is populated regardless of verification — with
+  `tls.RequestClientCert` or `tls.RequireAnyClientCert` the server verifies
+  nothing, so a self-signed certificate passed and the CN allow-list on top gave
+  no protection. A non-empty `VerifiedChains` is now required. **If your
+  `tls.Config` does not use `RequireAndVerifyClientCert` with a `ClientCAs` pool,
+  mTLS clients will start failing with `ErrMTLSCertificateUnverified`.**
+- **`CombinedAuth` now enforces the mTLS allow-lists.** Its mTLS branch tested
+  only `len(PeerCertificates) > 0` and returned `c.Next()`, so `AllowedCNs`,
+  `AllowedOUs`, `AllowedDNSSANs` and `CertValidator` were never consulted —
+  configuring them there had no effect and any client certificate authenticated.
+- **An HMAC `service` containing the delimiter is rejected.** The legacy signed
+  message `timestamp:service:body` is not injective and `service` comes from a
+  client-supplied header, so a signature for (`"a"`, `"b:c"`) could be presented
+  as (`"a:b"`, `"c"`). Set `AllowDelimitersInService` if a deployed signer needs
+  the old behaviour.
+- **`X-Forwarded-For` is read from the right, and `X-Real-IP` no longer wins.**
+  Taking the leftmost entry is spoofable by design — the proxy appends the real
+  address to the right of whatever the client sent — so every control keyed on
+  `GetClientIP` was bypassable even behind a correctly configured proxy. **Client
+  IPs in your logs and rate-limit buckets will change**, to the correct values.
+- **`TrustedProxyConfig` parses its lists lazily.** Parsing happened only in
+  `NewTrustedProxyConfig`, while `TrustedProxies` is an exported field and
+  `DefaultTrustedProxyConfig` returns a literal — so a config built as a struct
+  literal had empty parsed lists and fell through to "nothing configured",
+  trusting every private address instead of the one asked for. Tightening the
+  policy silently loosened it.
+- **IPv6 unique local addresses (`fc00::/7`) count as private.** An all-IPv6
+  deployment never trusted its own proxies.
+- **The rate-limit window rolls over for active clients.** The in-memory limiter
+  compared the window against `lastSeen`, refreshed on every allowed request, so
+  the counter only grew: "100 per minute" meant "100 requests, then a full minute
+  of silence", and a steady 1 req/s client was blocked at the 100th second. **Some
+  clients you were blocking will now be allowed** — correctly.
+- **`X-XSS-Protection` defaults to `"0"`.** The header is deprecated, and the
+  filter that `"1; mode=block"` enabled introduced XSS and info-leak bugs of its
+  own.
+- **Secret comparison no longer leaks length.** `constantTimeEqual` called
+  `subtle.ConstantTimeCompare` directly, which returns early on a length mismatch.
+- **New API**: `ReplayGuard` and `NewMemoryReplayGuard` for HMAC replay
+  protection; `ComputeHMACBound`, `SignatureInput` and `RequestSignatureFunc` for
+  signatures that cover the method, path and query;
+  `HMACConfig.AllowDelimitersInService`; `ErrMTLSCertificateUnverified`.
+
 ## Requirements
 
-- Go 1.26 or later
+- **Go 1.27+** (`go.mod` declares `go 1.27.0`)
 - github.com/gofiber/fiber/v3 v3.4.0+ (for Fiber middleware)
 - github.com/rs/zerolog v1.34.0+ (for logging)
 

@@ -88,11 +88,68 @@ app.Use(middleware.HMACAuth(middleware.HMACConfig{
     MaxTimeDrift: 5 * time.Minute,
 }))
 
-// 客户端计算 HMAC 签名
+// 客户端侧计算签名
 timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 signature := middleware.ComputeHMAC(timestamp, "service-name", requestBody, secret)
-// 设置 Headers: X-Signature, X-Timestamp, X-Service, X-Key-Id (可选)
+// 请求头：X-Signature、X-Timestamp、X-Service、X-Key-Id（可选）
 ```
+
+#### 把签名绑定到请求上
+
+默认被签名的消息是 `timestamp:service:body`。它**既不覆盖方法也不覆盖路径**，因此为
+`POST /transfer` 签出的签名，在 body 相同的 `POST /delete-account` 上同样有效。
+
+`ComputeHMACBound` 会把方法、路径和查询串一并签进去，并给每个字段加长度前缀，使编码
+成为单射。改变被签名的字节会一次性让所有已部署的签名方失效，所以这是可选项：
+
+```go
+app.Use(middleware.HMACAuth(middleware.HMACConfig{
+    Secret:               "your-hmac-secret",
+    RequestSignatureFunc: middleware.ComputeHMACBound,
+}))
+```
+
+客户端用同样的方式签名：
+
+```go
+signature := middleware.ComputeHMACBound(middleware.SignatureInput{
+    Timestamp: timestamp,
+    Service:   "service-name",
+    Method:    req.Method,
+    Path:      req.URL.Path,
+    RawQuery:  req.URL.RawQuery,
+    Body:      string(body),
+    Secret:    secret,
+})
+```
+
+旧编码就地变安全了：由于 `service` 来自客户端提供的请求头、而旧格式不是单射的，
+（`service` 为 `"a"`、`body` 为 `"b:c"`）的签名可以被当成（`service` 为 `"a:b"`、
+`body` 为 `"c"`）提交。现在含分隔符的 service 标识会被拒绝。只有在确实有已部署的签名方
+依赖它时，才设置 `AllowDelimitersInService`。
+
+#### 重放保护
+
+时间戳窗口只限定被截获的请求还能用多久——它并不阻止请求在窗口内被重放。没有守卫时，
+每个已签名的请求在 `MaxTimeDrift` 期间都是可重放的：
+
+```go
+app.Use(middleware.HMACAuth(middleware.HMACConfig{
+    Secret:      "your-hmac-secret",
+    ReplayGuard: middleware.NewMemoryReplayGuard(), // 单实例
+}))
+```
+
+`ReplayGuard` 是接口，多实例部署可以用共享存储实现：
+
+```go
+type ReplayGuard interface {
+    // Seen 报告 id 是否此前已被接受过，并把它记录 ttl 时长。
+    Seen(id string, ttl time.Duration) bool
+}
+```
+
+### mTLS 客户端证书认证
 
 ### mTLS 客户端证书认证
 
@@ -122,6 +179,16 @@ app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
 }))
 ```
 
+**证书必须已由 TLS 层校验通过。** 只要对端*发送了*证书，
+`tls.ConnectionState.PeerCertificates` 就会被填充，而在 `tls.RequestClientCert` 或
+`tls.RequireAnyClientCert` 下服务端什么都不校验——于是自签名证书可以通过，而由于它的
+Subject 由生成者自己决定，上层的 CN 白名单也提供不了保护。现在认证要求
+`VerifiedChains` 非空；请把 `tls.Config` 配置为
+`ClientAuth: tls.RequireAndVerifyClientCert` 并提供 `ClientCAs` 池。
+
+未经校验的证书会以 `ErrMTLSCertificateUnverified` 被拒绝。失败原因会被包装，因此日志
+仍能指出具体成因。
+
 ### 组合认证
 
 ```go
@@ -138,6 +205,10 @@ app.Use(middleware.CombinedAuth(middleware.AuthConfig{
     },
 }))
 ```
+
+`CombinedAuth` 的 mTLS 分支执行与独立 `MTLSAuth` 中间件完全相同的检查，包括
+`AllowedCNs`、`AllowedOUs`、`AllowedDNSSANs` 和 `CertValidator`，因此组合中间件不会
+接受独立中间件会拒绝的请求。
 
 ### 限流
 
@@ -166,6 +237,9 @@ app.Use(middleware.RateLimit(middleware.RateLimitConfig{
     },
 }))
 ```
+
+内存限流器把窗口起点与淘汰时间戳分开记录，因此活跃客户端会按时滚动窗口："每分钟 100
+次"意味着任意一分钟内 100 次，而不是"100 次之后必须安静整整一分钟"。
 
 ### 安全头
 
@@ -233,7 +307,7 @@ app.Use(middleware.RequestLogging(middleware.LoggingConfig{
 ### 客户端 IP 检测
 
 ```go
-// 配置可信代理
+// 一定要用构造函数来建这个配置
 trustedProxies := middleware.NewTrustedProxyConfig([]string{
     "10.0.0.0/8",
     "192.168.1.1",
@@ -252,6 +326,17 @@ http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 })
 ```
 
+`X-Forwarded-For` 是**从右往左**遍历的，跳过本身属于可信代理的跳数，在第一个不可信的
+地址处停下。这是唯一不可伪造的读法：客户端发送 `X-Forwarded-For: 1.2.3.4`，代理把真实
+地址*追加*到它右边，于是伪造的值仍然在最左。只有在没有可用链路时才会使用
+`X-Real-IP`。
+
+所有以这个函数为基础的管控——IP 白名单、按 IP 限流、审计日志——可信程度都取决于
+`TrustedProxies`，所以请把它设成你实际的代理。什么都不配置时，私有地址会被信任。
+
+IPv6 唯一本地地址（`fc00::/7`）算作私有地址，因此纯 IPv6 部署也能信任自己的代理。
+
+### 数据脱敏工具
 ### 数据脱敏工具
 
 ```go
@@ -328,9 +413,49 @@ middleware-kit/
 └── *_test.go           # 完整测试
 ```
 
+## 升级说明（v2.2.0）
+
+**其中三条会拒绝此前能通过认证的请求。** 升级线上部署前请先读 mTLS 和 HMAC 两条。
+
+- **mTLS 要求证书已通过 TLS 校验。** `MTLSAuth` 和 `CombinedAuth` 此前接受对端*发送*
+  的任何证书，因为 `PeerCertificates` 无论是否校验都会被填充——在
+  `tls.RequestClientCert` 或 `tls.RequireAnyClientCert` 下服务端什么都不校验，于是
+  自签名证书能通过，上层的 CN 白名单也提供不了保护。现在要求 `VerifiedChains` 非空。
+  **如果你的 `tls.Config` 没有使用 `RequireAndVerifyClientCert` 并配置 `ClientCAs`
+  池，mTLS 客户端会开始以 `ErrMTLSCertificateUnverified` 失败。**
+- **`CombinedAuth` 现在会执行 mTLS 白名单。** 它的 mTLS 分支此前只检查
+  `len(PeerCertificates) > 0` 就 `c.Next()`，于是 `AllowedCNs`、`AllowedOUs`、
+  `AllowedDNSSANs` 和 `CertValidator` 从未被查阅——在那里配置它们毫无作用，任何客户端
+  证书都能通过认证。
+- **含分隔符的 HMAC `service` 会被拒绝。** 旧的被签名消息 `timestamp:service:body`
+  不是单射的，而 `service` 来自客户端提供的请求头，于是（`"a"`、`"b:c"`）的签名可以被
+  当成（`"a:b"`、`"c"`）提交。若有已部署的签名方需要旧行为，请设置
+  `AllowDelimitersInService`。
+- **`X-Forwarded-For` 从右往左读，`X-Real-IP` 不再优先。** 取最左项在设计上就是可伪造
+  的——代理会把真实地址追加到客户端所发内容的右边——因此即便代理配置正确，所有以
+  `GetClientIP` 为基础的管控都可被绕过。**你日志和限流桶里的客户端 IP 会发生变化**，
+  变成正确的值。
+- **`TrustedProxyConfig` 改为懒解析。** 解析此前只发生在 `NewTrustedProxyConfig` 里，
+  而 `TrustedProxies` 是导出字段、`DefaultTrustedProxyConfig` 返回的是字面量——于是用
+  结构体字面量构造的配置解析列表为空，落进"什么都没配置"的分支，信任所有私有地址而不是
+  你要求的那一个。收紧策略反而静默放宽了。
+- **IPv6 唯一本地地址（`fc00::/7`）算作私有。** 纯 IPv6 部署此前从不信任自己的代理。
+- **限流窗口会为活跃客户端滚动。** 内存限流器此前拿窗口和 `lastSeen` 比较，而后者在每个
+  被允许的请求上都会刷新，于是计数器只增不减："每分钟 100 次"变成了"100 次之后必须安静
+  整整一分钟"，稳定 1 req/s 的客户端会在第 100 秒被拦住。**一些你此前在拦的客户端现在会
+  被放过**——这是正确的。
+- **`X-XSS-Protection` 默认为 `"0"`。** 该头已废弃，而 `"1; mode=block"` 启用的过滤器
+  本身引入了 XSS 和信息泄露问题。
+- **密钥比较不再泄露长度。** `constantTimeEqual` 此前直接调用
+  `subtle.ConstantTimeCompare`，而它在长度不一致时会提前返回。
+- **新增 API**：用于 HMAC 重放保护的 `ReplayGuard` 和 `NewMemoryReplayGuard`；用于让
+  签名覆盖方法、路径和查询串的 `ComputeHMACBound`、`SignatureInput` 和
+  `RequestSignatureFunc`；`HMACConfig.AllowDelimitersInService`；
+  `ErrMTLSCertificateUnverified`。
+
 ## 依赖要求
 
-- Go 1.26 或更高版本
+- **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
 - github.com/gofiber/fiber/v3 v3.4.0+（Fiber 中间件）
 - github.com/rs/zerolog v1.34.0+（日志）
 
