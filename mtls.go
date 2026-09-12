@@ -75,7 +75,7 @@ func MTLSAuth(cfg MTLSConfig) fiber.Handler {
 		// satisfy every restriction in cfg.
 		cert, err := authenticateMTLS(c.RequestCtx().TLSConnectionState(), cfg, lists)
 		if err != nil {
-			if !cfg.RequireCert && errors.Is(err, ErrMTLSCertificateMissing) {
+			if !cfg.RequireCert && certificateAbsent(err) {
 				return c.Next()
 			}
 			if cfg.Logger != nil {
@@ -113,7 +113,7 @@ func MTLSAuthStd(cfg MTLSConfig) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			cert, err := authenticateMTLS(r.TLS, cfg, lists)
 			if err != nil {
-				if !cfg.RequireCert && errors.Is(err, ErrMTLSCertificateMissing) {
+				if !cfg.RequireCert && certificateAbsent(err) {
 					next.ServeHTTP(w, r)
 					return
 				}

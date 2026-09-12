@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -717,5 +718,118 @@ func TestBrokenForwardedChainDoesNotTrustItsLeftEnd(t *testing.T) {
 	// An INTACT all-trusted chain still yields its leftmost entry.
 	if got := GetClientIP(newReq("10.9.9.9, 10.0.0.2", ""), cfg); got != "10.9.9.9" {
 		t.Errorf("GetClientIP = %q, want 10.9.9.9 from an intact internal chain", got)
+	}
+}
+
+// --- Codex review round 6 (PR #3) ---
+
+// TestValidatorErrorIsNotAnAbsentCertificate is the regression test for
+// RequireCert=false classifying validator verdicts by sentinel.
+//
+// checkCertificate preserves a CertValidator's error with %w, so a validator
+// that returned or wrapped ErrMTLSCertificateMissing -- a plausible way to say
+// "this certificate does not identify anyone" -- satisfied
+// errors.Is(err, ErrMTLSCertificateMissing) at the middleware. A certificate
+// that was presented, verified by the TLS layer, and then explicitly REJECTED
+// was therefore let through as though none had been presented at all.
+func TestValidatorErrorIsNotAnAbsentCertificate(t *testing.T) {
+	cert := certWithCN("svc-a")
+	verified := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{cert},
+		VerifiedChains:   [][]*x509.Certificate{{cert}},
+	}
+
+	for _, tc := range []struct {
+		name      string
+		validator func(*x509.Certificate) error
+	}{
+		{"returns the sentinel", func(*x509.Certificate) error { return ErrMTLSCertificateMissing }},
+		{"wraps the sentinel", func(*x509.Certificate) error {
+			return fmt.Errorf("no identity in certificate: %w", ErrMTLSCertificateMissing)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := MTLSConfig{RequireCert: false, CertValidator: tc.validator}
+
+			reached := false
+			handler := MTLSAuthStd(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "https://example.test/private", nil)
+			req.TLS = verified
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if reached {
+				t.Error("a certificate the validator rejected reached the handler")
+			}
+			if rec.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+			}
+		})
+	}
+}
+
+// TestAbsentCertificateStillPassesWhenNotRequired guards the other direction:
+// RequireCert=false must keep waving through a client that presented nothing.
+func TestAbsentCertificateStillPassesWhenNotRequired(t *testing.T) {
+	cfg := MTLSConfig{RequireCert: false}
+
+	reached := false
+	handler := MTLSAuthStd(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+	}))
+
+	// No TLS at all, and TLS without a peer certificate.
+	for name, state := range map[string]*tls.ConnectionState{
+		"plaintext":      nil,
+		"no client cert": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reached = false
+			req := httptest.NewRequest(http.MethodGet, "https://example.test/open", nil)
+			req.TLS = state
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+
+			if !reached {
+				t.Error("a request with no client certificate was rejected while RequireCert is false")
+			}
+		})
+	}
+}
+
+// TestCertificateAbsentClassification covers the predicate both middlewares
+// share, including the unverified-chain case that must never be waved through.
+func TestCertificateAbsentClassification(t *testing.T) {
+	cert := certWithCN("svc-a")
+	lists := newCertAllowLists(MTLSConfig{})
+
+	absent := func(state *tls.ConnectionState, cfg MTLSConfig) bool {
+		_, err := authenticateMTLS(state, cfg, lists)
+		return certificateAbsent(err)
+	}
+
+	if !absent(nil, MTLSConfig{}) {
+		t.Error("nil connection state: want absent")
+	}
+	if !absent(&tls.ConnectionState{}, MTLSConfig{}) {
+		t.Error("no peer certificate: want absent")
+	}
+	if absent(&tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}, MTLSConfig{}) {
+		t.Error("presented but unverified: want NOT absent")
+	}
+
+	verified := &tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{cert},
+		VerifiedChains:   [][]*x509.Certificate{{cert}},
+	}
+	rejecting := MTLSConfig{CertValidator: func(*x509.Certificate) error { return ErrMTLSCertificateMissing }}
+	if absent(verified, rejecting) {
+		t.Error("validator rejected a verified certificate: want NOT absent")
+	}
+	// The exported sentinel must still reach handleMTLSError's classification.
+	if _, err := authenticateMTLS(nil, MTLSConfig{}, lists); !errors.Is(err, ErrMTLSCertificateMissing) {
+		t.Errorf("nil state: got %v, want it to still wrap ErrMTLSCertificateMissing", err)
 	}
 }

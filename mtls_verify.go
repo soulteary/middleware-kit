@@ -3,6 +3,7 @@ package middleware
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 )
 
@@ -32,6 +33,26 @@ func newCertAllowLists(cfg MTLSConfig) certAllowLists {
 	return l
 }
 
+// errNoClientCertificate marks the errors produced by the peer-certificate
+// PRESENCE check, and only those.
+type errNoClientCertificate struct{ error }
+
+func (e errNoClientCertificate) Unwrap() error { return e.error }
+
+// certificateAbsent reports whether err says the client presented no
+// certificate at all -- the one condition RequireCert=false is meant to wave
+// through.
+//
+// Deliberately NOT errors.Is(err, ErrMTLSCertificateMissing). A CertValidator
+// is caller-supplied code, and one that returns or wraps that exported
+// sentinel made a certificate which explicitly FAILED validation read as an
+// absent one, so the request was let through whenever RequireCert was false.
+// This type is unexported, so only the presence check above can produce it.
+func certificateAbsent(err error) bool {
+	var absent errNoClientCertificate
+	return errors.As(err, &absent)
+}
+
 // verifiedPeerCertificate returns the leaf client certificate only when the TLS
 // layer actually verified it against the server's ClientCAs.
 //
@@ -44,10 +65,10 @@ func newCertAllowLists(cfg MTLSConfig) certAllowLists {
 // ClientCAs, which is the property callers actually mean by "mTLS".
 func verifiedPeerCertificate(state *tls.ConnectionState) (*x509.Certificate, error) {
 	if state == nil {
-		return nil, fmt.Errorf("%w: not a TLS connection", ErrMTLSCertificateMissing)
+		return nil, errNoClientCertificate{fmt.Errorf("%w: not a TLS connection", ErrMTLSCertificateMissing)}
 	}
 	if len(state.PeerCertificates) == 0 {
-		return nil, fmt.Errorf("%w: no client certificate", ErrMTLSCertificateMissing)
+		return nil, errNoClientCertificate{fmt.Errorf("%w: no client certificate", ErrMTLSCertificateMissing)}
 	}
 	if len(state.VerifiedChains) == 0 {
 		return nil, ErrMTLSCertificateUnverified
