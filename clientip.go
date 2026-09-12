@@ -175,21 +175,32 @@ func IsPrivateIP(ip net.IP) bool {
 func (c *TrustedProxyConfig) clientIPFromForwarded(forwarded, realIP string, peer net.IP) string {
 	if forwarded != "" {
 		parts := strings.Split(forwarded, ",")
+		chainBroken := false
 		for i := len(parts) - 1; i >= 0; i-- {
 			ip := net.ParseIP(strings.TrimSpace(parts[i]))
 			if ip == nil {
 				// An unparseable hop breaks the chain of custody: nothing to
 				// its left can be attributed to a trusted proxy.
+				chainBroken = true
 				break
 			}
 			if !c.IsTrusted(ip) {
 				return ip.String()
 			}
 		}
-		// Every hop is a trusted proxy (internal traffic): the leftmost entry
-		// is the closest thing to a client address available.
-		if ip := net.ParseIP(strings.TrimSpace(parts[0])); ip != nil {
-			return ip.String()
+
+		// Only when the walk actually reached the left end. Returning
+		// parts[0] after a BROKEN chain handed back the very value an
+		// attacker prepends: "X-Forwarded-For: 10.0.0.9, unknown" made the
+		// forged 10.0.0.9 the answer as soon as one hop failed to parse --
+		// and it won over a trustworthy X-Real-IP, because this returned
+		// before that was consulted. A broken chain falls through instead.
+		if !chainBroken {
+			// Every hop is a trusted proxy (internal traffic): the leftmost
+			// entry is the closest thing to a client address available.
+			if ip := net.ParseIP(strings.TrimSpace(parts[0])); ip != nil {
+				return ip.String()
+			}
 		}
 	}
 

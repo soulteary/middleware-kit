@@ -677,3 +677,45 @@ func TestForwardedChainSpansRepeatedHeaders(t *testing.T) {
 		t.Errorf("GetClientIP(X-Real-IP) = %q, want 203.0.113.9; the client's line won", got)
 	}
 }
+
+// TestBrokenForwardedChainDoesNotTrustItsLeftEnd is the regression test for
+// returning parts[0] after the walk aborted on a malformed hop.
+//
+// The loop breaks because nothing left of an unparseable entry can be
+// attributed to a trusted proxy -- and then the fallback returned exactly that
+// leftmost entry, which is the one an attacker prepends. It also returned
+// before X-Real-IP was consulted, so a trustworthy proxy-set value lost to a
+// forged one.
+func TestBrokenForwardedChainDoesNotTrustItsLeftEnd(t *testing.T) {
+	cfg := &TrustedProxyConfig{TrustedProxies: []string{"10.0.0.0/8"}}
+
+	newReq := func(xff, realIP string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = "10.0.0.1:1234" // the trusted proxy
+		r.Header.Set("X-Forwarded-For", xff)
+		if realIP != "" {
+			r.Header.Set("X-Real-IP", realIP)
+		}
+		return r
+	}
+
+	// A forged allow-listed address, then a hop this package cannot parse.
+	if got := GetClientIP(newReq("10.9.9.9, unknown", ""), cfg); got == "10.9.9.9" {
+		t.Error("a forged address left of a malformed hop was returned as the client")
+	}
+
+	// And it must not beat a trustworthy X-Real-IP.
+	if got := GetClientIP(newReq("10.9.9.9, unknown", "203.0.113.9"), cfg); got != "203.0.113.9" {
+		t.Errorf("GetClientIP = %q, want the proxy's X-Real-IP 203.0.113.9", got)
+	}
+
+	// With no X-Real-IP either, the direct peer is the answer.
+	if got := GetClientIP(newReq("10.9.9.9, unknown", ""), cfg); got != "10.0.0.1" {
+		t.Errorf("GetClientIP = %q, want the direct peer 10.0.0.1", got)
+	}
+
+	// An INTACT all-trusted chain still yields its leftmost entry.
+	if got := GetClientIP(newReq("10.9.9.9, 10.0.0.2", ""), cfg); got != "10.9.9.9" {
+		t.Errorf("GetClientIP = %q, want 10.9.9.9 from an intact internal chain", got)
+	}
+}
