@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
@@ -37,6 +39,11 @@ type AuthConfig struct {
 // Authentication methods are tried in order: mTLS > HMAC > API Key.
 // The first successful authentication allows the request through.
 func CombinedAuth(cfg AuthConfig) fiber.Handler {
+	var mtlsLists certAllowLists
+	if cfg.MTLSConfig != nil {
+		mtlsLists = newCertAllowLists(*cfg.MTLSConfig)
+	}
+
 	return func(c fiber.Ctx) error {
 		// Check if any authentication method is configured
 		hasMTLS := cfg.MTLSConfig != nil
@@ -53,16 +60,27 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 			return handleCombinedAuthError(c, cfg, ErrUnauthorized)
 		}
 
-		// Try mTLS first (if TLS connection with verified client certificate)
+		// Try mTLS first (if TLS connection with a verified client certificate).
+		//
+		// This runs the same authenticateMTLS check as the dedicated MTLSAuth
+		// middleware. Previously it only tested len(PeerCertificates) > 0 and
+		// returned c.Next(), which meant AllowedCNs, AllowedOUs,
+		// AllowedDNSSANs and CertValidator were all silently ignored here --
+		// any client certificate, including a self-signed one, authenticated.
 		if hasMTLS && c.Protocol() == "https" {
-			tlsConn := c.RequestCtx().TLSConnectionState()
-			if tlsConn != nil && len(tlsConn.PeerCertificates) > 0 {
-				// Client certificate is present and verified (by TLS layer)
+			cert, err := authenticateMTLS(c.RequestCtx().TLSConnectionState(), *cfg.MTLSConfig, mtlsLists)
+			if err == nil {
 				if cfg.Logger != nil {
-					cfg.Logger.Debug().Msg("Request authenticated via mTLS")
+					cfg.Logger.Debug().
+						Str("cn", cert.Subject.CommonName).
+						Msg("Request authenticated via mTLS")
 				}
 				return c.Next()
 			}
+			if cfg.Logger != nil {
+				cfg.Logger.Debug().Err(err).Msg("mTLS authentication did not apply")
+			}
+			// Fall through to the remaining methods.
 		}
 
 		// Try HMAC signature
@@ -143,23 +161,45 @@ func validateHMAC(c fiber.Ctx, cfg HMACConfig) bool {
 
 	maxDrift := cfg.MaxTimeDrift
 	if maxDrift == 0 {
-		maxDrift = 5 * 60 // 5 minutes in seconds
+		// 5 * 60 here was a time.Duration of 300 NANOSECONDS, not five
+		// minutes: int64(maxDrift.Seconds()) then rounded to 0, so the
+		// documented zero value demanded a timestamp matching the current
+		// second exactly, and the replay guard retained entries for 600ns.
+		maxDrift = 5 * time.Minute
 	}
 
 	if !isTimestampValid(ts, int64(maxDrift.Seconds())) {
 		return false
 	}
 
-	// Compute expected signature
-	signFunc := cfg.SignatureFunc
-	if signFunc == nil {
-		signFunc = ComputeHMAC
+	if !cfg.serviceAllowed(service) {
+		return false
 	}
 
-	body := string(c.Body())
-	expectedSig := signFunc(timestamp, service, body, secret)
+	expectedSig := cfg.expectedSignature(SignatureInput{
+		Method: c.Method(),
+		// The ESCAPED path: see SignatureInput.Path.
+		Path:      string(c.RequestCtx().URI().PathOriginal()),
+		RawQuery:  string(c.RequestCtx().URI().QueryString()),
+		Timestamp: timestamp,
+		Service:   service,
+		Body:      string(c.Body()),
+		Secret:    secret,
+	})
 
-	return constantTimeEqual(signature, expectedSig)
+	if !constantTimeEqual(signature, expectedSig) {
+		return false
+	}
+
+	// The NORMALIZED drift, not cfg.MaxTimeDrift. With the documented zero
+	// value, validation above computed a five-minute default while this call
+	// passed 0, so MemoryReplayGuard expired the entry on the very next
+	// request and enabling ReplayGuard prevented no replay at all.
+	if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, replayRetention(maxDrift)) {
+		return false
+	}
+
+	return true
 }
 
 // validateAPIKey performs inline API key validation.

@@ -40,6 +40,12 @@ var (
 	// ErrMTLSCertificateInvalid indicates the client certificate is invalid.
 	ErrMTLSCertificateInvalid = errors.New("mTLS client certificate invalid")
 
+	// ErrMTLSCertificateUnverified indicates the peer presented a certificate
+	// that the TLS layer did not verify against the server's ClientCAs. This
+	// happens when the server is configured with tls.RequestClientCert or
+	// tls.RequireAnyClientCert instead of tls.RequireAndVerifyClientCert.
+	ErrMTLSCertificateUnverified = errors.New("mTLS client certificate not verified by the TLS layer")
+
 	// ErrUnauthorized is a generic unauthorized error.
 	ErrUnauthorized = errors.New("unauthorized")
 )

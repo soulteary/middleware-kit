@@ -105,14 +105,66 @@ func TestGetClientIP_Standard(t *testing.T) {
 		assert.Equal(t, "8.8.8.8", ip)
 	})
 
-	t.Run("X-Real-IP preferred over X-Forwarded-For", func(t *testing.T) {
+	// The X-Forwarded-For chain wins over X-Real-IP when both are present: the
+	// chain is self-validating (each hop appends, so it can be walked from the
+	// right and verified against the trusted-proxy list), while X-Real-IP is a
+	// single value that a proxy which does not overwrite it will pass through
+	// from the client verbatim.
+	t.Run("X-Forwarded-For chain preferred over X-Real-IP", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/", nil)
 		req.RemoteAddr = "192.168.1.1:12345"
 		req.Header.Set("X-Real-IP", "203.0.113.1")
 		req.Header.Set("X-Forwarded-For", "203.0.113.2")
 
 		ip := GetClientIP(req, nil)
-		assert.Equal(t, "203.0.113.1", ip)
+		assert.Equal(t, "203.0.113.2", ip)
+	})
+
+	// Regression test: a client that prepends its own value to X-Forwarded-For
+	// must not be able to choose the reported address. The proxy appends the
+	// real peer to the right of the forged entry, and the right-to-left walk
+	// stops at the first untrusted hop.
+	t.Run("forged leftmost X-Forwarded-For entry is ignored", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "192.168.1.1:12345"
+		req.Header.Set("X-Forwarded-For", "1.2.3.4, 203.0.113.9")
+
+		assert.Equal(t, "203.0.113.9", GetClientIP(req, nil))
+	})
+
+	t.Run("trusted proxy hops are skipped right to left", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "10.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.9, 10.0.0.8")
+
+		assert.Equal(t, "203.0.113.7", GetClientIP(req, nil))
+	})
+
+	t.Run("untrusted peer ignores forwarded headers entirely", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "203.0.113.50:12345"
+		req.Header.Set("X-Forwarded-For", "1.2.3.4")
+		req.Header.Set("X-Real-IP", "1.2.3.4")
+
+		assert.Equal(t, "203.0.113.50", GetClientIP(req, nil))
+	})
+
+	// A struct literal must behave like NewTrustedProxyConfig: the parsed
+	// allow-list used to stay empty, which silently fell back to trusting every
+	// private address instead of the one configured.
+	t.Run("struct literal config honours TrustedProxies", func(t *testing.T) {
+		cfg := &TrustedProxyConfig{TrustedProxies: []string{"10.0.0.1"}}
+
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = "192.168.1.1:12345" // private, but NOT in the list
+		req.Header.Set("X-Forwarded-For", "1.2.3.4")
+		assert.Equal(t, "192.168.1.1", GetClientIP(req, cfg),
+			"a private address outside TrustedProxies must not be trusted")
+
+		req2 := httptest.NewRequest("GET", "/", nil)
+		req2.RemoteAddr = "10.0.0.1:12345" // in the list
+		req2.Header.Set("X-Forwarded-For", "203.0.113.4")
+		assert.Equal(t, "203.0.113.4", GetClientIP(req2, cfg))
 	})
 }
 
@@ -187,7 +239,7 @@ func TestGetClientIPFiber(t *testing.T) {
 		assert.Equal(t, "203.0.113.2", capturedIP)
 	})
 
-	t.Run("X-Real-IP preferred over X-Forwarded-For", func(t *testing.T) {
+	t.Run("X-Forwarded-For chain preferred over X-Real-IP", func(t *testing.T) {
 		app := fiber.New()
 		var capturedIP string
 
@@ -209,7 +261,7 @@ func TestGetClientIPFiber(t *testing.T) {
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Equal(t, "203.0.113.1", capturedIP)
+		assert.Equal(t, "203.0.113.2", capturedIP)
 	})
 
 	t.Run("with nil config uses default", func(t *testing.T) {

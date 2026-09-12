@@ -25,10 +25,69 @@ type RateLimiter struct {
 	stopOnce     sync.Once
 }
 
-// visitor tracks request counts for a single IP/key.
+// visitor records the timestamps of a single IP/key's recent requests.
+//
+// An EXACT sliding window: the timestamps of the requests still inside the
+// trailing Window are kept, so no interval of Window can ever exceed Rate.
+//
+// A fixed window -- reset the counter every Window -- admits almost twice the
+// configured rate across a boundary. Weighting the previous window's count by
+// how much of it still overlaps fixes the worst of that but is only an
+// estimate: it assumes the previous window's requests were spread evenly, so a
+// burst concentrated at its end is undercounted and more requests get through
+// than Rate. Keeping the timestamps costs at most Rate int64s per visitor and
+// removes the approximation entirely.
 type visitor struct {
-	count    int
+	// epoch anchors the ring. Stamps are offsets from it, measured with
+	// time.Time.Sub, which subtracts Go's MONOTONIC clock readings when both
+	// operands carry one -- as anything derived from time.Now() does.
+	//
+	// UnixNano would discard that reading and leave the ring ordered by the
+	// wall clock, so a backward step (an NTP correction, a VM restore) makes
+	// existing stamps look like the future: they never fall past the cutoff,
+	// and the visitor stays limited long after its window should have drained
+	// while its own retries keep it from being evicted.
+	epoch time.Time
+
+	// stamps is a ring buffer of up to Rate request offsets, oldest at head.
+	stamps []int64
+	head   int
+	count  int
+
+	// lastSeen is only used for eviction bookkeeping.
 	lastSeen time.Time
+}
+
+// allow records a request at now if the trailing window has room for it.
+func (v *visitor) allow(now time.Time, window time.Duration, rate int) bool {
+	at := int64(now.Sub(v.epoch))
+	cutoff := at - int64(window)
+
+	// Drop the timestamps that have left the trailing window. They are in
+	// ascending order, so this stops at the first one still inside it.
+	for v.count > 0 && v.stamps[v.head] <= cutoff {
+		v.head = (v.head + 1) % len(v.stamps)
+		v.count--
+	}
+
+	if v.count >= rate {
+		return false
+	}
+
+	v.stamps[(v.head+v.count)%len(v.stamps)] = at
+	v.count++
+	return true
+}
+
+// newVisitor allocates a visitor able to hold one full window of requests.
+func newVisitor(now time.Time, rate int) *visitor {
+	if rate < 1 {
+		rate = 1
+	}
+	v := &visitor{epoch: now, stamps: make([]int64, rate), lastSeen: now}
+	v.stamps[0] = 0
+	v.count = 1
+	return v
 }
 
 // RateLimiterConfig configures the rate limiter.
@@ -169,28 +228,19 @@ func (rl *RateLimiter) Allow(key string) bool {
 		if len(rl.visitors) >= rl.maxVisitors {
 			rl.cleanupOldestVisitors()
 		}
-		rl.visitors[key] = &visitor{
-			count:    1,
-			lastSeen: now,
-		}
+		rl.visitors[key] = newVisitor(now, rl.rate)
 		return true
 	}
 
-	// If window has passed, reset count
-	if now.Sub(v.lastSeen) > rl.window {
-		v.count = 1
-		v.lastSeen = now
-		return true
-	}
-
-	// Check if over limit
-	if v.count >= rl.rate {
-		return false
-	}
-
-	v.count++
 	v.lastSeen = now
-	return true
+
+	// Requests leave the window on schedule, not only after an idle gap. The
+	// original code compared against lastSeen -- refreshed on every allowed
+	// request -- so a client sending faster than one request per window never
+	// rolled over at all: the counter only ever grew, and "100 per minute"
+	// actually meant "100 requests, then a full minute of silence". A steady
+	// 1 req/s client was blocked at the 100th second.
+	return v.allow(now, rl.window, rl.rate)
 }
 
 // AddToWhitelist adds a key to the whitelist.

@@ -53,7 +53,45 @@ type HMACConfig struct {
 	// SignatureFunc is a custom function to compute the expected signature.
 	// If nil, the default signature function is used:
 	// HMAC-SHA256(secret, timestamp:service:body)
+	//
+	// Note what this form does NOT cover: the request method, path and query.
+	// A signature minted for POST /transfer is equally valid on POST
+	// /delete-account with the same body. Set RequestSignatureFunc to bind the
+	// signature to the request target.
 	SignatureFunc func(timestamp, service, body, secret string) string
+
+	// AllowDelimitersInService permits ':' in the service identifier.
+	//
+	// ':' is rejected by default because ComputeHMAC -- the signer used when
+	// neither function below is set -- signs "timestamp:service:body", which
+	// has no field boundaries: (service "a", body "b:c") and (service "a:b",
+	// body "c") produce the same bytes, so one signature stands for two
+	// different requests.
+	//
+	// Whether a signer is safe from that cannot be inferred from the config:
+	// SignatureFunc may be ComputeHMAC itself, or a wrapper around it, and a
+	// custom RequestSignatureFunc may concatenate just as ambiguously. So the
+	// guard stays on unless you turn it off here, having checked that your
+	// signer frames its fields unambiguously. This package's own
+	// ComputeHMACBound is length-prefixed and is recognised without the flag.
+	AllowDelimitersInService bool
+
+	// RequestSignatureFunc computes the expected signature over the full
+	// request, including its method, path and query. When set it takes
+	// precedence over SignatureFunc.
+	//
+	// ComputeHMACBound is the recommended implementation. Switching to it
+	// changes the bytes being signed, so every signer has to be updated at the
+	// same time; that is why it is opt-in rather than the default.
+	RequestSignatureFunc RequestSignatureFunc
+
+	// ReplayGuard, when set, rejects a signature that has already been
+	// accepted. Without it a captured request can be replayed freely for the
+	// whole MaxTimeDrift window (5 minutes by default).
+	//
+	// Use NewMemoryReplayGuard for a single instance, or a shared store for a
+	// multi-instance deployment.
+	ReplayGuard ReplayGuard
 
 	// ErrorHandler is called when authentication fails.
 	ErrorHandler func(c fiber.Ctx, err error) error
@@ -97,9 +135,13 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 	if cfg.MaxTimeDrift == 0 {
 		cfg.MaxTimeDrift = 5 * time.Minute
 	}
-	if cfg.SignatureFunc == nil {
-		cfg.SignatureFunc = ComputeHMAC
-	}
+	// SignatureFunc is deliberately NOT defaulted to ComputeHMAC here.
+	//
+	// expectedSignature already falls back to it, and materializing the
+	// default made serviceAllowed see a non-nil function and mistake the
+	// legacy delimiter-based signer for a caller-supplied custom one -- which
+	// re-allowed ':' in the service header and reopened the collision that
+	// check exists to close.
 
 	return func(c fiber.Ctx) error {
 		// Get signature and timestamp from headers
@@ -161,9 +203,30 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 			return handleHMACError(c, cfg, ErrHMACTimestampExpired)
 		}
 
+		// A service identifier carrying the legacy encoding's delimiter would
+		// let one signature stand for two different (service, body) pairs.
+		// Only the legacy encoding is ambiguous; see serviceAllowed.
+		if !cfg.serviceAllowed(service) {
+			if cfg.Logger != nil {
+				cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
+			}
+			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
+		}
+
 		// Compute expected signature
 		body := string(c.Body())
-		expectedSig := cfg.SignatureFunc(timestamp, service, body, secret)
+		expectedSig := cfg.expectedSignature(SignatureInput{
+			Method: c.Method(),
+			// The ESCAPED path: see SignatureInput.Path. c.Path() is decoded,
+			// so "/a/b" and "/a%2Fb" sign identically while routing to
+			// different handlers.
+			Path:      string(c.RequestCtx().URI().PathOriginal()),
+			RawQuery:  string(c.RequestCtx().URI().QueryString()),
+			Timestamp: timestamp,
+			Service:   service,
+			Body:      body,
+			Secret:    secret,
+		})
 
 		// Compare signatures using constant-time comparison
 		if !hmac.Equal([]byte(signature), []byte(expectedSig)) {
@@ -175,6 +238,25 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 					Str("method", c.Method()).
 					Str("service", service).
 					Msg("HMAC authentication failed: signature mismatch")
+			}
+			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
+		}
+
+		// Reject a signature that has already been accepted. The timestamp
+		// window bounds how long a captured request stays useful; it does not
+		// stop it being replayed within that window.
+		//
+		// This runs AFTER the signature check, as the standard and combined
+		// implementations do. Recording first meant a request carrying a valid
+		// signature header but an altered body -- which is rejected anyway --
+		// consumed that signature, so the legitimate request that followed was
+		// refused as a replay.
+		if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, replayRetention(cfg.MaxTimeDrift)) {
+			if cfg.Logger != nil {
+				cfg.Logger.Warn().
+					Str("ip", GetClientIPFiber(c, cfg.TrustedProxyConfig)).
+					Str("path", c.Path()).
+					Msg("HMAC authentication failed: signature replayed")
 			}
 			return handleHMACError(c, cfg, ErrHMACSignatureInvalid)
 		}
@@ -213,9 +295,13 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 	if cfg.MaxTimeDrift == 0 {
 		cfg.MaxTimeDrift = 5 * time.Minute
 	}
-	if cfg.SignatureFunc == nil {
-		cfg.SignatureFunc = ComputeHMAC
-	}
+	// SignatureFunc is deliberately NOT defaulted to ComputeHMAC here.
+	//
+	// expectedSignature already falls back to it, and materializing the
+	// default made serviceAllowed see a non-nil function and mistake the
+	// legacy delimiter-based signer for a caller-supplied custom one -- which
+	// re-allowed ':' in the service header and reopened the collision that
+	// check exists to close.
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,8 +378,25 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 				return
 			}
 
+			if !cfg.serviceAllowed(service) {
+				if cfg.Logger != nil {
+					cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
+				}
+				http.Error(w, "Unauthorized: invalid signature", http.StatusUnauthorized)
+				return
+			}
+
 			// Compute expected signature
-			expectedSig := cfg.SignatureFunc(timestamp, service, string(bodyBytes), secret)
+			expectedSig := cfg.expectedSignature(SignatureInput{
+				Method: r.Method,
+				// The ESCAPED path: see SignatureInput.Path.
+				Path:      r.URL.EscapedPath(),
+				RawQuery:  r.URL.RawQuery,
+				Timestamp: timestamp,
+				Service:   service,
+				Body:      string(bodyBytes),
+				Secret:    secret,
+			})
 
 			// Compare signatures using constant-time comparison
 			if !hmac.Equal([]byte(signature), []byte(expectedSig)) {
@@ -305,6 +408,17 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 						Str("method", r.Method).
 						Str("service", service).
 						Msg("HMAC authentication failed: signature mismatch")
+				}
+				http.Error(w, "Unauthorized: invalid signature", http.StatusUnauthorized)
+				return
+			}
+
+			if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, replayRetention(cfg.MaxTimeDrift)) {
+				if cfg.Logger != nil {
+					cfg.Logger.Warn().
+						Str("ip", GetClientIP(r, cfg.TrustedProxyConfig)).
+						Str("path", r.URL.Path).
+						Msg("HMAC authentication failed: signature replayed")
 				}
 				http.Error(w, "Unauthorized: invalid signature", http.StatusUnauthorized)
 				return

@@ -18,7 +18,12 @@ type SecurityHeadersConfig struct {
 	// Default: "DENY"
 	XFrameOptions string
 
-	// XXSSProtection sets X-XSS-Protection header.
+	// XXSSProtection sets the X-XSS-Protection header.
+	//
+	// Default: "0". The header is deprecated and the legacy filter it enabled
+	// ("1; mode=block") introduced XSS and cross-site info-leak bugs of its own
+	// in the browsers that shipped it, so current guidance is to disable it
+	// explicitly and rely on Content-Security-Policy instead.
 	// Enables browser XSS filter.
 	// Default: "1; mode=block"
 	XXSSProtection string
@@ -72,7 +77,7 @@ func DefaultSecurityHeadersConfig() SecurityHeadersConfig {
 	return SecurityHeadersConfig{
 		XContentTypeOptions: "nosniff",
 		XFrameOptions:       "DENY",
-		XXSSProtection:      "1; mode=block",
+		XXSSProtection:      "0",
 		ReferrerPolicy:      "strict-origin-when-cross-origin",
 	}
 }
@@ -83,7 +88,7 @@ func StrictSecurityHeadersConfig() SecurityHeadersConfig {
 	return SecurityHeadersConfig{
 		XContentTypeOptions:       "nosniff",
 		XFrameOptions:             "DENY",
-		XXSSProtection:            "1; mode=block",
+		XXSSProtection:            "0",
 		ReferrerPolicy:            "strict-origin-when-cross-origin",
 		ContentSecurityPolicy:     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;",
 		StrictTransportSecurity:   "max-age=31536000; includeSubDomains",

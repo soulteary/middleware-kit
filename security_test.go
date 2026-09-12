@@ -24,7 +24,10 @@ func TestSecurityHeaders_Fiber(t *testing.T) {
 
 		assert.Equal(t, "nosniff", resp.Header.Get("X-Content-Type-Options"))
 		assert.Equal(t, "DENY", resp.Header.Get("X-Frame-Options"))
-		assert.Equal(t, "1; mode=block", resp.Header.Get("X-XSS-Protection"))
+		// X-XSS-Protection is deprecated; "0" (disable the auditor) is the current
+		// guidance. The legacy "1; mode=block" filter introduced XSS and info-leak
+		// bugs of its own in the browsers that shipped it.
+		assert.Equal(t, "0", resp.Header.Get("X-XSS-Protection"))
 		assert.Equal(t, "strict-origin-when-cross-origin", resp.Header.Get("Referrer-Policy"))
 	})
 
@@ -98,7 +101,7 @@ func TestSecurityHeadersStd(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, "nosniff", rr.Header().Get("X-Content-Type-Options"))
 		assert.Equal(t, "DENY", rr.Header().Get("X-Frame-Options"))
-		assert.Equal(t, "1; mode=block", rr.Header().Get("X-XSS-Protection"))
+		assert.Equal(t, "0", rr.Header().Get("X-XSS-Protection"))
 		assert.Equal(t, "strict-origin-when-cross-origin", rr.Header().Get("Referrer-Policy"))
 	})
 
