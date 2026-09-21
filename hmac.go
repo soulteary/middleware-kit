@@ -4,9 +4,9 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -111,8 +111,17 @@ func DefaultHMACConfig() HMACConfig {
 }
 
 // HMACAuthStd creates a standard net/http middleware for HMAC signature authentication.
-func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
-	// Apply defaults
+// WithDefaults returns cfg with the header names and MaxTimeDrift filled in.
+//
+// SignatureFunc is deliberately NOT defaulted to ComputeHMAC. ExpectedSignature
+// already falls back to it, and materializing the default made ServiceAllowed
+// see a non-nil function and mistake the legacy delimiter-based signer for a
+// caller-supplied custom one -- which re-allowed ':' in the service header and
+// reopened the collision that check exists to close.
+//
+// Exported so a framework adapter defaults a config exactly as the net/http
+// middleware does.
+func (cfg HMACConfig) WithDefaults() HMACConfig {
 	if cfg.SignatureHeader == "" {
 		cfg.SignatureHeader = "X-Signature"
 	}
@@ -128,13 +137,112 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 	if cfg.MaxTimeDrift == 0 {
 		cfg.MaxTimeDrift = 5 * time.Minute
 	}
-	// SignatureFunc is deliberately NOT defaulted to ComputeHMAC here.
-	//
-	// ExpectedSignature already falls back to it, and materializing the
-	// default made ServiceAllowed see a non-nil function and mistake the
-	// legacy delimiter-based signer for a caller-supplied custom one -- which
-	// re-allowed ':' in the service header and reopened the collision that
-	// check exists to close.
+	return cfg
+}
+
+// ResolveSecret picks the HMAC secret to verify a request against.
+//
+// KeyProvider wins when set. A provider that returns nothing for a NON-EMPTY
+// key ID means that key ID is invalid, which is a different answer from "no
+// secret is configured at all" and must not be reported as one.
+//
+// disabled is true when no secret is configured and AllowEmptySecret permits
+// the request through unauthenticated; the caller should let it pass.
+//
+// Exported so a framework adapter resolves the secret exactly as the net/http
+// middleware does.
+func (cfg HMACConfig) ResolveSecret(keyID string) (secret string, disabled bool, err error) {
+	secret = cfg.Secret
+	if cfg.KeyProvider != nil {
+		secret = cfg.KeyProvider(keyID)
+		if secret == "" && keyID != "" {
+			return "", false, ErrHMACKeyIDInvalid
+		}
+	}
+
+	if secret == "" {
+		if cfg.AllowEmptySecret {
+			if cfg.Logger != nil {
+				cfg.Logger.Warn().Msg("HMAC authentication disabled (no secret configured)")
+			}
+			return "", true, nil
+		}
+		return "", false, ErrHMACSecretNotConfigured
+	}
+
+	return secret, false, nil
+}
+
+// CheckTimestamp validates a request timestamp against MaxTimeDrift, and logs
+// the rejection when it is outside the window.
+//
+// The drift is an absolute value, so a timestamp far in the FUTURE is refused
+// just as one far in the past is.
+//
+// Exported so a framework adapter applies exactly the window the net/http
+// middleware applies.
+func (cfg HMACConfig) CheckTimestamp(timestamp string) error {
+	ts, err := ParseTimestamp(timestamp)
+	if err != nil {
+		return ErrHMACTimestampInvalid
+	}
+
+	now := time.Now().Unix()
+	drift := now - ts
+	if drift < 0 {
+		drift = -drift
+	}
+	if time.Duration(drift)*time.Second > cfg.MaxTimeDrift {
+		if cfg.Logger != nil {
+			cfg.Logger.Warn().
+				Int64("timestamp", ts).
+				Int64("now", now).
+				Int64("drift_seconds", drift).
+				Msg("HMAC authentication failed: timestamp expired")
+		}
+		return ErrHMACTimestampExpired
+	}
+
+	return nil
+}
+
+// serviceRejected reports whether the service identifier may not be used with
+// the configured signer, and logs the rejection.
+//
+// A service carrying the legacy encoding's delimiter would let one signature
+// stand for two different (service, body) pairs. Only the legacy encoding is
+// ambiguous; see ServiceAllowed.
+func (cfg HMACConfig) serviceRejected(service string) bool {
+	if cfg.ServiceAllowed(service) {
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
+	}
+	return true
+}
+
+// replayed reports whether signature has already been accepted, and logs the
+// rejection.
+//
+// The timestamp window bounds how long a captured request stays useful; it does
+// not stop it being replayed inside that window. clientIP is a function so the
+// address is resolved only when there is a log to write.
+func (cfg HMACConfig) replayed(signature string, clientIP func() string, path string) bool {
+	if cfg.ReplayGuard == nil || !cfg.ReplayGuard.Seen(signature, ReplayRetention(cfg.MaxTimeDrift)) {
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Warn().
+			Str("ip", clientIP()).
+			Str("path", path).
+			Msg("HMAC authentication failed: signature replayed")
+	}
+	return true
+}
+
+func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
+	cfg = cfg.WithDefaults()
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -157,48 +265,24 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 			}
 
 			// Get the HMAC secret
-			secret := cfg.Secret
-			if cfg.KeyProvider != nil {
-				secret = cfg.KeyProvider(keyID)
-				if secret == "" && keyID != "" {
-					http.Error(w, "Unauthorized: invalid key ID", http.StatusUnauthorized)
-					return
-				}
-			}
-
-			// Check if secret is configured
-			if secret == "" {
-				if cfg.AllowEmptySecret {
-					if cfg.Logger != nil {
-						cfg.Logger.Warn().Msg("HMAC authentication disabled (no secret configured)")
-					}
-					next.ServeHTTP(w, r)
-					return
-				}
+			secret, disabled, err := cfg.ResolveSecret(keyID)
+			switch {
+			case disabled:
+				next.ServeHTTP(w, r)
+				return
+			case errors.Is(err, ErrHMACKeyIDInvalid):
+				http.Error(w, "Unauthorized: invalid key ID", http.StatusUnauthorized)
+				return
+			case err != nil:
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
 
-			// Validate timestamp
-			ts, err := strconv.ParseInt(timestamp, 10, 64)
-			if err != nil {
-				http.Error(w, "Unauthorized: invalid timestamp", http.StatusUnauthorized)
-				return
-			}
-
-			// Check timestamp drift
-			now := time.Now().Unix()
-			drift := now - ts
-			if drift < 0 {
-				drift = -drift
-			}
-			if time.Duration(drift)*time.Second > cfg.MaxTimeDrift {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().
-						Int64("timestamp", ts).
-						Int64("now", now).
-						Int64("drift_seconds", drift).
-						Msg("HMAC authentication failed: timestamp expired")
+			// Validate the timestamp and its drift
+			if err := cfg.CheckTimestamp(timestamp); err != nil {
+				if errors.Is(err, ErrHMACTimestampInvalid) {
+					http.Error(w, "Unauthorized: invalid timestamp", http.StatusUnauthorized)
+					return
 				}
 				http.Error(w, "Unauthorized: timestamp expired", http.StatusUnauthorized)
 				return
@@ -211,10 +295,7 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			if !cfg.ServiceAllowed(service) {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
-				}
+			if cfg.serviceRejected(service) {
 				http.Error(w, "Unauthorized: invalid signature", http.StatusUnauthorized)
 				return
 			}
@@ -246,13 +327,12 @@ func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 				return
 			}
 
-			if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, ReplayRetention(cfg.MaxTimeDrift)) {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().
-						Str("ip", GetClientIP(r, cfg.TrustedProxyConfig)).
-						Str("path", r.URL.Path).
-						Msg("HMAC authentication failed: signature replayed")
-				}
+			// Reject a signature that has already been accepted. This runs
+			// AFTER the signature check: recording first meant a request with
+			// a valid signature header but an altered body -- rejected anyway
+			// -- consumed that signature, so the legitimate request that
+			// followed was refused as a replay.
+			if cfg.replayed(signature, func() string { return GetClientIP(r, cfg.TrustedProxyConfig) }, r.URL.Path) {
 				http.Error(w, "Unauthorized: invalid signature", http.StatusUnauthorized)
 				return
 			}

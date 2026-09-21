@@ -22,12 +22,9 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 	}
 
 	return func(c fiber.Ctx) error {
-		// Check if any authentication method is configured
-		hasMTLS := cfg.MTLSConfig != nil
-		hasHMAC := cfg.HMACConfig != nil && (cfg.HMACConfig.Secret != "" || cfg.HMACConfig.KeyProvider != nil)
-		hasAPIKey := cfg.APIKeyConfig != nil && cfg.APIKeyConfig.APIKey != ""
+		schemes := configuredSchemes(cfg)
 
-		if !hasMTLS && !hasHMAC && !hasAPIKey {
+		if schemes.none() {
 			if cfg.AllowNoAuth {
 				if cfg.Logger != nil {
 					cfg.Logger.Warn().Msg("No authentication method configured, allowing request (development mode)")
@@ -37,86 +34,128 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 			return handleCombinedAuthError(c, cfg, middleware.ErrUnauthorized)
 		}
 
-		// Try mTLS first (if TLS connection with a verified client certificate).
-		//
-		// This runs the same middleware.AuthenticateMTLS check as the dedicated MTLSAuth
-		// middleware. Previously it only tested len(PeerCertificates) > 0 and
-		// returned c.Next(), which meant AllowedCNs, AllowedOUs,
-		// AllowedDNSSANs and CertValidator were all silently ignored here --
-		// any client certificate, including a self-signed one, authenticated.
-		//
-		// There is no `c.Protocol() == "https"` guard in front of it: in Fiber
-		// v3 Protocol reports the HTTP VERSION ("HTTP/1.1"), so such a guard
-		// was never satisfied and this scheme was never attempted -- an
-		// mTLS-only AuthConfig rejected every request, and a mixed one
-		// silently demanded HMAC or an API key from clients that had already
-		// presented a valid certificate. AuthenticateMTLS reads the TLS
-		// connection state itself and reports a plaintext connection as an
-		// absent certificate, so a non-TLS request simply falls through to the
-		// remaining methods.
-		if hasMTLS {
-			cert, err := middleware.AuthenticateMTLS(c.RequestCtx().TLSConnectionState(), *cfg.MTLSConfig, mtlsLists)
-			if err == nil {
-				if cfg.Logger != nil {
-					cfg.Logger.Debug().
-						Str("cn", cert.Subject.CommonName).
-						Msg("Request authenticated via mTLS")
-				}
-				return c.Next()
-			}
-			if cfg.Logger != nil {
-				cfg.Logger.Debug().Err(err).Msg("mTLS authentication did not apply")
-			}
-			// Fall through to the remaining methods.
+		// Strongest scheme first. A scheme that is configured but does not
+		// authenticate this request falls through to the next one; only when
+		// every configured scheme has declined is the request refused.
+		if schemes.mtls && tryMTLS(c, cfg, mtlsLists) {
+			return c.Next()
+		}
+		if schemes.hmac && tryHMAC(c, cfg) {
+			return c.Next()
+		}
+		if schemes.apiKey && tryAPIKey(c, cfg) {
+			return c.Next()
 		}
 
-		// Try HMAC signature
-		if hasHMAC {
-			signature := c.Get(middleware.HeaderOrDefault(cfg.HMACConfig.SignatureHeader, "X-Signature"))
-			timestamp := c.Get(middleware.HeaderOrDefault(cfg.HMACConfig.TimestampHeader, "X-Timestamp"))
-
-			if signature != "" && timestamp != "" {
-				// Create a temporary HMACConfig with logger
-				hmacCfg := *cfg.HMACConfig
-				if hmacCfg.Logger == nil && cfg.Logger != nil {
-					hmacCfg.Logger = cfg.Logger
-				}
-				if hmacCfg.TrustedProxyConfig == nil && cfg.TrustedProxyConfig != nil {
-					hmacCfg.TrustedProxyConfig = cfg.TrustedProxyConfig
-				}
-
-				// Try HMAC validation inline
-				if validateHMAC(c, hmacCfg) {
-					if cfg.Logger != nil {
-						cfg.Logger.Debug().Msg("Request authenticated via HMAC")
-					}
-					return c.Next()
-				}
-				// HMAC was provided but failed, we should still check API key
-			}
-		}
-
-		// Try API Key
-		if hasAPIKey {
-			apiKeyCfg := *cfg.APIKeyConfig
-			if apiKeyCfg.Logger == nil && cfg.Logger != nil {
-				apiKeyCfg.Logger = cfg.Logger
-			}
-			if apiKeyCfg.TrustedProxyConfig == nil && cfg.TrustedProxyConfig != nil {
-				apiKeyCfg.TrustedProxyConfig = cfg.TrustedProxyConfig
-			}
-
-			if validateAPIKey(c, apiKeyCfg) {
-				if cfg.Logger != nil {
-					cfg.Logger.Debug().Msg("Request authenticated via API Key")
-				}
-				return c.Next()
-			}
-		}
-
-		// No authentication method succeeded
 		return handleCombinedAuthError(c, cfg, middleware.ErrUnauthorized)
 	}
+}
+
+// authSchemes records which schemes cfg actually has credentials for. A scheme
+// whose config is present but empty -- an HMACConfig with no secret and no
+// KeyProvider, an APIKeyConfig with no key -- is not configured.
+type authSchemes struct {
+	mtls   bool
+	hmac   bool
+	apiKey bool
+}
+
+func configuredSchemes(cfg AuthConfig) authSchemes {
+	return authSchemes{
+		mtls:   cfg.MTLSConfig != nil,
+		hmac:   cfg.HMACConfig != nil && (cfg.HMACConfig.Secret != "" || cfg.HMACConfig.KeyProvider != nil),
+		apiKey: cfg.APIKeyConfig != nil && cfg.APIKeyConfig.APIKey != "",
+	}
+}
+
+func (s authSchemes) none() bool { return !s.mtls && !s.hmac && !s.apiKey }
+
+// tryMTLS reports whether the request's client certificate authenticates it.
+//
+// This runs the same middleware.AuthenticateMTLS check as the dedicated
+// MTLSAuth middleware. Previously it only tested len(PeerCertificates) > 0 and
+// returned c.Next(), which meant AllowedCNs, AllowedOUs, AllowedDNSSANs and
+// CertValidator were all silently ignored here -- any client certificate,
+// including a self-signed one, authenticated.
+//
+// There is no `c.Protocol() == "https"` guard in front of it: in Fiber v3
+// Protocol reports the HTTP VERSION ("HTTP/1.1"), so such a guard was never
+// satisfied and this scheme was never attempted -- an mTLS-only AuthConfig
+// rejected every request, and a mixed one silently demanded HMAC or an API key
+// from clients that had already presented a valid certificate.
+// AuthenticateMTLS reads the TLS connection state itself and reports a
+// plaintext connection as an absent certificate, so a non-TLS request simply
+// declines here and falls through.
+func tryMTLS(c fiber.Ctx, cfg AuthConfig, lists middleware.CertAllowLists) bool {
+	cert, err := middleware.AuthenticateMTLS(c.RequestCtx().TLSConnectionState(), *cfg.MTLSConfig, lists)
+	if err != nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Debug().Err(err).Msg("mTLS authentication did not apply")
+		}
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Debug().
+			Str("cn", cert.Subject.CommonName).
+			Msg("Request authenticated via mTLS")
+	}
+	return true
+}
+
+// tryHMAC reports whether the request carries a valid HMAC signature.
+//
+// A request with no signature or no timestamp header is not an attempt at HMAC
+// at all, so it declines without consuming anything; one that carries both but
+// fails validation also declines, and the API key is still tried.
+func tryHMAC(c fiber.Ctx, cfg AuthConfig) bool {
+	signature := c.Get(middleware.HeaderOrDefault(cfg.HMACConfig.SignatureHeader, "X-Signature"))
+	timestamp := c.Get(middleware.HeaderOrDefault(cfg.HMACConfig.TimestampHeader, "X-Timestamp"))
+	if signature == "" || timestamp == "" {
+		return false
+	}
+
+	if !validateHMAC(c, inheritHMAC(*cfg.HMACConfig, cfg)) {
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Debug().Msg("Request authenticated via HMAC")
+	}
+	return true
+}
+
+// tryAPIKey reports whether the request carries a valid API key.
+func tryAPIKey(c fiber.Ctx, cfg AuthConfig) bool {
+	if !validateAPIKey(c, inheritAPIKey(*cfg.APIKeyConfig, cfg)) {
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Debug().Msg("Request authenticated via API Key")
+	}
+	return true
+}
+
+// inheritHMAC and inheritAPIKey give a scheme the combined config's logger and
+// trusted-proxy settings where it has none of its own, so one Logger set on
+// CombinedAuth covers every scheme. A scheme's own settings always win.
+
+func inheritHMAC(sub middleware.HMACConfig, cfg AuthConfig) middleware.HMACConfig {
+	if sub.Logger == nil {
+		sub.Logger = cfg.Logger
+	}
+	if sub.TrustedProxyConfig == nil {
+		sub.TrustedProxyConfig = cfg.TrustedProxyConfig
+	}
+	return sub
+}
+
+func inheritAPIKey(sub middleware.APIKeyConfig, cfg AuthConfig) middleware.APIKeyConfig {
+	if sub.Logger == nil {
+		sub.Logger = cfg.Logger
+	}
+	if sub.TrustedProxyConfig == nil {
+		sub.TrustedProxyConfig = cfg.TrustedProxyConfig
+	}
+	return sub
 }
 
 func validateHMAC(c fiber.Ctx, cfg middleware.HMACConfig) bool {
