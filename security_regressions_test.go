@@ -302,23 +302,6 @@ func TestReplayRetentionCoversTheWholeValidityWindow(t *testing.T) {
 	}
 }
 
-// TestCombinedAuthPassesTheNormalizedDrift is the regression test for
-// CombinedAuth handing cfg.MaxTimeDrift to Seen while validating against a
-// locally computed default. With the documented zero value the guard received
-// 0, expired the entry on the very next request, and enabling ReplayGuard
-// prevented no replay at all.
-func (g *recordingGuard) Seen(id string, ttl time.Duration) bool {
-	if g.onSeen != nil {
-		g.onSeen(ttl)
-	}
-	if g.seen == nil {
-		g.seen = map[string]bool{}
-	}
-	was := g.seen[id]
-	g.seen[id] = true
-	return was
-}
-
 // TestServicePolicyIsOnUnlessTheSignerIsKnownSafe: the ":" restriction exists
 // because ComputeHMAC's "timestamp:service:body" form has no field
 // boundaries. It may only be lifted when the configuration positively
