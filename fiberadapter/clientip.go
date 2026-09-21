@@ -4,7 +4,7 @@ import (
 	"net"
 
 	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
+	middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // GetClientIPFiber resolves the client IP of a Fiber request. It applies the

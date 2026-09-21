@@ -4,7 +4,7 @@ import (
 	"crypto/x509"
 
 	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
+	middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // The config types below are the root package's configs plus the Fiber-typed

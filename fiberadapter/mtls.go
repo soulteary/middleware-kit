@@ -3,7 +3,7 @@ package fiberadapter
 import (
 	"errors"
 	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
+	middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // MTLSAuth returns a Fiber middleware that authenticates requests by their

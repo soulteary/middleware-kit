@@ -2,7 +2,7 @@ package fiberadapter
 
 import (
 	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
+	middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // SecurityHeaders returns a Fiber middleware that sets the response security
