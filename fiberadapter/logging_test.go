@@ -172,6 +172,28 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		assert.Contains(t, logOutput, "request_body")
 	})
 
+	t.Run("adds no request_body field for an empty body", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
+
+		app := fiber.New()
+		app.Use(RequestLogging(LoggingConfig{LoggingConfig: middleware.LoggingConfig{
+			Logger:         &logger,
+			LogRequestBody: true,
+		}}))
+		app.Post("/", func(c fiber.Ctx) error {
+			return c.SendString("OK")
+		})
+
+		req := httptest.NewRequest("POST", "/", nil)
+		_, err := app.Test(req)
+		assert.NoError(t, err)
+
+		logOutput := buf.String()
+		assert.Contains(t, logOutput, "HTTP request", "the entry is still written")
+		assert.NotContains(t, logOutput, "request_body", "an empty body adds no field")
+	})
+
 	t.Run("truncates large request body", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := zerolog.New(&buf)

@@ -70,11 +70,33 @@ than enumerate every commit.
   `HMACConfig.ServiceAllowed`, `ParseTimestamp`, `IsTimestampValid`,
   `ReplayRetention`, `TrustedProxyConfig.ClientIPFromForwarded`,
   `JoinForwarded`, `LastHeaderValue`, `HeaderOrDefault`. All additive.
+- `HMACConfig.WithDefaults`, `HMACConfig.ResolveSecret` and
+  `HMACConfig.CheckTimestamp`, so the Fiber and net/http halves apply one
+  implementation of the header defaults, the secret/key-ID resolution and the
+  timestamp window rather than a copy each.
 - Doc comments on every exported `fiberadapter` function, which had none, and a
   package comment for `fiberadapter`.
 - This changelog, a security policy, a Dependabot configuration, and a release
   workflow that refuses a tag whose major version does not match the module
   path.
+
+### Internal
+
+- Brought the four functions Go Report Card flagged for cyclomatic complexity
+  under gocyclo's threshold of 15, by extraction only — no statement's behaviour
+  changed, and the test suite (99.8% of statements) passes unaltered:
+
+  | Function | Before | After |
+  |---|---|---|
+  | `fiberadapter.CombinedAuth` | 30 | 11 |
+  | `HMACAuthStd` | 27 | 14 |
+  | `fiberadapter.HMACAuth` | 27 | 13 |
+  | `fiberadapter.RequestLogging` | 20 | 11 |
+
+  `CombinedAuth` now reads as the sequence its documentation describes, one
+  `tryXxx` per scheme. The two HMAC middlewares share the three new
+  `HMACConfig` methods above, which removes three duplicated blocks. No
+  function in the module exceeds 15.
 
 ### Documentation
 

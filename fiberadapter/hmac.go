@@ -2,8 +2,7 @@ package fiberadapter
 
 import (
 	"crypto/hmac"
-	"strconv"
-	"time"
+	"errors"
 
 	"github.com/gofiber/fiber/v3"
 	middleware "github.com/soulteary/middleware-kit/v3"
@@ -16,29 +15,9 @@ import (
 // unambiguous for the configured signer, the signature must match, and only then
 // is it recorded with the ReplayGuard.
 func HMACAuth(cfg HMACConfig) fiber.Handler {
-	// Apply defaults
-	if cfg.SignatureHeader == "" {
-		cfg.SignatureHeader = "X-Signature"
-	}
-	if cfg.TimestampHeader == "" {
-		cfg.TimestampHeader = "X-Timestamp"
-	}
-	if cfg.KeyIDHeader == "" {
-		cfg.KeyIDHeader = "X-Key-Id"
-	}
-	if cfg.ServiceHeader == "" {
-		cfg.ServiceHeader = "X-Service"
-	}
-	if cfg.MaxTimeDrift == 0 {
-		cfg.MaxTimeDrift = 5 * time.Minute
-	}
-	// SignatureFunc is deliberately NOT defaulted to ComputeHMAC here.
-	//
-	// ExpectedSignature already falls back to it, and materializing the
-	// default made ServiceAllowed see a non-nil function and mistake the
-	// legacy delimiter-based signer for a caller-supplied custom one -- which
-	// re-allowed ':' in the service header and reopened the collision that
-	// check exists to close.
+	// The same defaults the net/http half applies, including the deliberate
+	// omission of SignatureFunc -- see middleware.HMACConfig.WithDefaults.
+	cfg.HMACConfig = cfg.WithDefaults()
 
 	return func(c fiber.Ctx) error {
 		// Get signature and timestamp from headers
@@ -58,44 +37,20 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 		}
 
 		// Get the HMAC secret
-		secret := cfg.Secret
-		if cfg.KeyProvider != nil {
-			secret = cfg.KeyProvider(keyID)
-			if secret == "" && keyID != "" {
-				return handleHMACError(c, cfg, middleware.ErrHMACKeyIDInvalid)
-			}
-		}
-
-		// Check if secret is configured
-		if secret == "" {
-			if cfg.AllowEmptySecret {
-				if cfg.Logger != nil {
-					cfg.Logger.Warn().Msg("HMAC authentication disabled (no secret configured)")
-				}
-				return c.Next()
-			}
+		secret, disabled, err := cfg.ResolveSecret(keyID)
+		switch {
+		case disabled:
+			return c.Next()
+		case errors.Is(err, middleware.ErrHMACKeyIDInvalid):
+			return handleHMACError(c, cfg, middleware.ErrHMACKeyIDInvalid)
+		case err != nil:
 			return handleHMACError(c, cfg, middleware.ErrHMACSecretNotConfigured)
 		}
 
-		// Validate timestamp
-		ts, err := strconv.ParseInt(timestamp, 10, 64)
-		if err != nil {
-			return handleHMACError(c, cfg, middleware.ErrHMACTimestampInvalid)
-		}
-
-		// Check timestamp drift
-		now := time.Now().Unix()
-		drift := now - ts
-		if drift < 0 {
-			drift = -drift
-		}
-		if time.Duration(drift)*time.Second > cfg.MaxTimeDrift {
-			if cfg.Logger != nil {
-				cfg.Logger.Warn().
-					Int64("timestamp", ts).
-					Int64("now", now).
-					Int64("drift_seconds", drift).
-					Msg("HMAC authentication failed: timestamp expired")
+		// Validate the timestamp and its drift
+		if err := cfg.CheckTimestamp(timestamp); err != nil {
+			if errors.Is(err, middleware.ErrHMACTimestampInvalid) {
+				return handleHMACError(c, cfg, middleware.ErrHMACTimestampInvalid)
 			}
 			return handleHMACError(c, cfg, middleware.ErrHMACTimestampExpired)
 		}
@@ -103,10 +58,7 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 		// A service identifier carrying the legacy encoding's delimiter would
 		// let one signature stand for two different (service, body) pairs.
 		// Only the legacy encoding is ambiguous; see ServiceAllowed.
-		if !cfg.ServiceAllowed(service) {
-			if cfg.Logger != nil {
-				cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
-			}
+		if serviceRejected(cfg.HMACConfig, service) {
 			return handleHMACError(c, cfg, middleware.ErrHMACSignatureInvalid)
 		}
 
@@ -127,15 +79,7 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 
 		// Compare signatures using constant-time comparison
 		if !hmac.Equal([]byte(signature), []byte(expectedSig)) {
-			if cfg.Logger != nil {
-				clientIP := GetClientIPFiber(c, cfg.TrustedProxyConfig)
-				cfg.Logger.Warn().
-					Str("ip", clientIP).
-					Str("path", c.Path()).
-					Str("method", c.Method()).
-					Str("service", service).
-					Msg("HMAC authentication failed: signature mismatch")
-			}
+			logSignatureMismatch(cfg.HMACConfig, c, service)
 			return handleHMACError(c, cfg, middleware.ErrHMACSignatureInvalid)
 		}
 
@@ -148,13 +92,7 @@ func HMACAuth(cfg HMACConfig) fiber.Handler {
 		// signature header but an altered body -- which is rejected anyway --
 		// consumed that signature, so the legitimate request that followed was
 		// refused as a replay.
-		if cfg.ReplayGuard != nil && cfg.ReplayGuard.Seen(signature, middleware.ReplayRetention(cfg.MaxTimeDrift)) {
-			if cfg.Logger != nil {
-				cfg.Logger.Warn().
-					Str("ip", GetClientIPFiber(c, cfg.TrustedProxyConfig)).
-					Str("path", c.Path()).
-					Msg("HMAC authentication failed: signature replayed")
-			}
+		if replayed(cfg.HMACConfig, c, signature) {
 			return handleHMACError(c, cfg, middleware.ErrHMACSignatureInvalid)
 		}
 
@@ -201,4 +139,50 @@ func handleHMACError(c fiber.Ctx, cfg HMACConfig, err error) error {
 		"ok":     false,
 		"reason": reason,
 	})
+}
+
+// The three helpers below mirror the unexported ones on middleware.HMACConfig.
+// They cannot be shared: an unexported method is not reachable across a package
+// boundary, and what they log -- the client IP and the request path -- is
+// framework-specific. What they decide is not: each defers to the exported
+// policy on the embedded config.
+
+// serviceRejected reports whether the service identifier may not be used with
+// the configured signer, and logs the rejection.
+func serviceRejected(cfg middleware.HMACConfig, service string) bool {
+	if cfg.ServiceAllowed(service) {
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Warn().Str("service", service).Msg("HMAC authentication failed: service contains a reserved character")
+	}
+	return true
+}
+
+// logSignatureMismatch records a signature that did not match.
+func logSignatureMismatch(cfg middleware.HMACConfig, c fiber.Ctx, service string) {
+	if cfg.Logger == nil {
+		return
+	}
+	cfg.Logger.Warn().
+		Str("ip", GetClientIPFiber(c, cfg.TrustedProxyConfig)).
+		Str("path", c.Path()).
+		Str("method", c.Method()).
+		Str("service", service).
+		Msg("HMAC authentication failed: signature mismatch")
+}
+
+// replayed reports whether signature has already been accepted, and logs the
+// rejection.
+func replayed(cfg middleware.HMACConfig, c fiber.Ctx, signature string) bool {
+	if cfg.ReplayGuard == nil || !cfg.ReplayGuard.Seen(signature, middleware.ReplayRetention(cfg.MaxTimeDrift)) {
+		return false
+	}
+	if cfg.Logger != nil {
+		cfg.Logger.Warn().
+			Str("ip", GetClientIPFiber(c, cfg.TrustedProxyConfig)).
+			Str("path", c.Path()).
+			Msg("HMAC authentication failed: signature replayed")
+	}
+	return true
 }
