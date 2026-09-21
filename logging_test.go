@@ -237,3 +237,21 @@ func TestRequestLoggingStd_Extended(t *testing.T) {
 		assert.Contains(t, logOutput, "400")
 	})
 }
+
+// TestRequestLoggingStd_IncludeLatency covers the latency field, which is off in
+// every other test of this middleware.
+func TestRequestLoggingStd_IncludeLatency(t *testing.T) {
+	var buf bytes.Buffer
+	logger := zerolog.New(&buf)
+
+	rec := httptest.NewRecorder()
+	RequestLoggingStd(LoggingConfig{
+		Logger:         &logger,
+		IncludeLatency: true,
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", nil))
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, buf.String(), `"latency":`)
+}

@@ -2,13 +2,15 @@ package fiberadapter
 
 import (
 	"bytes"
+	"io"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	middleware "github.com/soulteary/middleware-kit/v2"
 	"github.com/stretchr/testify/assert"
-	"net/http/httptest"
-	"strings"
-	"testing"
 )
 
 func TestBodyLimit_Fiber(t *testing.T) {
@@ -258,5 +260,65 @@ func TestBodyLimit_FiberWithLogger(t *testing.T) {
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	})
+}
+
+// TestBodyLimit_Fiber_NoContentLength covers the body-size check that runs when
+// the Content-Length branch cannot: a chunked request advertises no length, so
+// fasthttp reports Content-Length as -1 and only the decoded body reveals the
+// size. Every test above sends a measured body, so this second check -- and the
+// logger and ErrorHandler inside it -- had no coverage at all.
+func TestBodyLimit_Fiber_NoContentLength(t *testing.T) {
+	oversized := strings.Repeat("a", 2048)
+
+	t.Run("rejects an unsized body over the limit", func(t *testing.T) {
+		app := fiber.New()
+		app.Use(BodyLimit(BodyLimitConfig{BodyLimitConfig: middleware.BodyLimitConfig{MaxSize: 1024}}))
+		app.Post("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		resp := postChunked(t, app, "/", []byte(oversized))
+		assert.Equal(t, fiber.StatusRequestEntityTooLarge, resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		assert.Contains(t, string(body), "request_entity_too_large")
+	})
+
+	t.Run("allows an unsized body under the limit", func(t *testing.T) {
+		app := fiber.New()
+		app.Use(BodyLimit(BodyLimitConfig{BodyLimitConfig: middleware.BodyLimitConfig{MaxSize: 1024}}))
+		app.Post("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		assert.Equal(t, fiber.StatusOK, postChunked(t, app, "/", []byte("small")).StatusCode)
+	})
+
+	t.Run("logs the rejection with the decoded body size", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
+
+		app := fiber.New()
+		app.Use(BodyLimit(BodyLimitConfig{BodyLimitConfig: middleware.BodyLimitConfig{
+			MaxSize: 1024,
+			Logger:  &logger,
+		}}))
+		app.Post("/upload", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		resp := postChunked(t, app, "/upload", []byte(oversized))
+		assert.Equal(t, fiber.StatusRequestEntityTooLarge, resp.StatusCode)
+		assert.Contains(t, buf.String(), "Request body size exceeds limit")
+		assert.Contains(t, buf.String(), `"body_size":2048`)
+		assert.Contains(t, buf.String(), "/upload")
+	})
+
+	t.Run("custom ErrorHandler is used", func(t *testing.T) {
+		app := fiber.New()
+		app.Use(BodyLimit(BodyLimitConfig{
+			BodyLimitConfig: middleware.BodyLimitConfig{MaxSize: 1024},
+			ErrorHandler: func(c fiber.Ctx) error {
+				return c.Status(fiber.StatusBadRequest).SendString("too big")
+			},
+		}))
+		app.Post("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		resp := postChunked(t, app, "/", []byte(oversized))
+		assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 	})
 }

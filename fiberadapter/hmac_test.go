@@ -2,14 +2,16 @@ package fiberadapter
 
 import (
 	"bytes"
-	"github.com/gofiber/fiber/v3"
-	"github.com/rs/zerolog"
-	middleware "github.com/soulteary/middleware-kit/v2"
-	"github.com/stretchr/testify/assert"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/rs/zerolog"
+	middleware "github.com/soulteary/middleware-kit/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHMACAuth_Fiber(t *testing.T) {
@@ -440,5 +442,82 @@ func TestHMACAuth_FiberWithLogger(t *testing.T) {
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	})
+}
+
+// TestHMACAuth_Fiber_UncoveredBranches covers three branches the suite above
+// never reaches: a timestamp in the future, the reserved-character check on the
+// service header, and the logging inside the replay rejection.
+func TestHMACAuth_Fiber_UncoveredBranches(t *testing.T) {
+	const secret = "test-secret"
+
+	newApp := func(cfg HMACConfig) *fiber.App {
+		app := fiber.New()
+		app.Use(HMACAuth(cfg))
+		app.Post("/x", func(c fiber.Ctx) error { return c.SendString("OK") })
+		return app
+	}
+
+	signed := func(ts, service, body string) *http.Request {
+		req := httptest.NewRequest("POST", "/x", bytes.NewBufferString(body))
+		req.Header.Set("X-Signature", middleware.ComputeHMAC(ts, service, body, secret))
+		req.Header.Set("X-Timestamp", ts)
+		req.Header.Set("X-Service", service)
+		return req
+	}
+
+	t.Run("a timestamp far in the future is expired too", func(t *testing.T) {
+		// The drift is taken as an absolute value; without this case only the
+		// past-timestamp side of that was exercised.
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
+
+		future := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+		app := newApp(HMACConfig{HMACConfig: middleware.HMACConfig{
+			Secret:       secret,
+			MaxTimeDrift: time.Minute,
+			Logger:       &logger,
+		}})
+
+		resp, err := app.Test(signed(future, "svc", "{}"))
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+		assert.Contains(t, buf.String(), "timestamp expired")
+	})
+
+	t.Run("a service carrying the legacy delimiter is rejected and logged", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
+
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		app := newApp(HMACConfig{HMACConfig: middleware.HMACConfig{Secret: secret, Logger: &logger}})
+
+		// ComputeHMAC signs "timestamp:service:body", so ("a", "b:{}") and
+		// ("a:b", "{}") sign identically -- which is why ':' is refused.
+		resp, err := app.Test(signed(ts, "svc:extra", "{}"))
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+		assert.Contains(t, buf.String(), "service contains a reserved character")
+	})
+
+	t.Run("a replayed signature is rejected and logged", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
+
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		app := newApp(HMACConfig{HMACConfig: middleware.HMACConfig{
+			Secret:      secret,
+			Logger:      &logger,
+			ReplayGuard: middleware.NewMemoryReplayGuard(),
+		}})
+
+		first, err := app.Test(signed(ts, "svc", "{}"))
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusOK, first.StatusCode)
+
+		second, err := app.Test(signed(ts, "svc", "{}"))
+		assert.NoError(t, err)
+		assert.Equal(t, fiber.StatusUnauthorized, second.StatusCode)
+		assert.Contains(t, buf.String(), "signature replayed")
 	})
 }

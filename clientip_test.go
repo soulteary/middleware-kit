@@ -241,3 +241,14 @@ func TestIsPrivateIP_LinkLocal(t *testing.T) {
 		assert.False(t, IsPrivateIP(nil))
 	})
 }
+
+// TestIsPrivateIP_IPv6UniqueLocal covers the ip.IsPrivate() arm, which the
+// hard-coded IPv4 ranges above reach before it. fc00::/7 is the IPv6 equivalent
+// of the private IPv4 blocks: without it an all-IPv6 deployment's proxies are
+// never trusted.
+func TestIsPrivateIP_IPv6UniqueLocal(t *testing.T) {
+	for _, s := range []string{"fc00::1", "fd12:3456::1"} {
+		assert.True(t, IsPrivateIP(net.ParseIP(s)), "%s is a unique local address", s)
+	}
+	assert.False(t, IsPrivateIP(net.ParseIP("2001:db8::1")), "a documentation address is not private")
+}

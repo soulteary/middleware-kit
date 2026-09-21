@@ -2,11 +2,13 @@ package fiberadapter
 
 import (
 	"bytes"
-	"github.com/gofiber/fiber/v3"
-	"github.com/rs/zerolog"
-	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/rs/zerolog"
+	middleware "github.com/soulteary/middleware-kit/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRequestLogging_Fiber(t *testing.T) {
@@ -258,4 +260,27 @@ func TestRequestLogging_Fiber(t *testing.T) {
 		logOutput := buf.String()
 		assert.Contains(t, logOutput, "error")
 	})
+}
+
+// TestRequestLogging_Fiber_ErrorLogLevel covers the level switch for responses
+// at 400 and above, which no test above triggers.
+func TestRequestLogging_Fiber_ErrorLogLevel(t *testing.T) {
+	var buf bytes.Buffer
+	logger := zerolog.New(&buf).Level(zerolog.DebugLevel)
+
+	app := fiber.New()
+	app.Use(RequestLogging(LoggingConfig{LoggingConfig: middleware.LoggingConfig{
+		Logger:        &logger,
+		LogLevel:      zerolog.DebugLevel,
+		ErrorLogLevel: zerolog.ErrorLevel,
+	}}))
+	app.Get("/boom", func(c fiber.Ctx) error {
+		return c.Status(fiber.StatusInternalServerError).SendString("boom")
+	})
+
+	req := httptest.NewRequest("GET", "/boom", nil)
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+	assert.Contains(t, buf.String(), `"level":"error"`)
 }

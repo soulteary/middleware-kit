@@ -428,3 +428,15 @@ func TestNewRateLimiter_Defaults(t *testing.T) {
 		assert.False(t, rl.Allow("client1"))
 	})
 }
+
+// TestNewVisitor_RateBelowOne covers the floor on the window size. A visitor
+// sized for zero requests could hold no timestamps at all, so the limiter would
+// either never admit a request or index out of range.
+func TestNewVisitor_RateBelowOne(t *testing.T) {
+	now := time.Now()
+	for _, rate := range []int{0, -5} {
+		v := newVisitor(now, rate)
+		assert.NotNil(t, v)
+		assert.Len(t, v.stamps, 1, "the window holds at least one request")
+	}
+}

@@ -1,11 +1,13 @@
 package fiberadapter
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
 	"github.com/gofiber/fiber/v3"
 	middleware "github.com/soulteary/middleware-kit/v2"
 	"github.com/stretchr/testify/assert"
-	"net/http/httptest"
-	"testing"
 )
 
 func TestGetClientIPFiber(t *testing.T) {
@@ -172,4 +174,32 @@ func TestGetClientIPFiber(t *testing.T) {
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 		assert.NotEmpty(t, capturedIP)
 	})
+}
+
+// TestGetClientIPFiber_UnparseableDirectIP covers the fallback for a direct
+// address that is not an IP at all. c.IP() returns a header value verbatim when
+// Config.ProxyHeader is set, so a header carrying a hostname reaches the parse
+// failure that every other test skips past.
+func TestGetClientIPFiber_UnparseableDirectIP(t *testing.T) {
+	app := fiber.New(fiber.Config{
+		ProxyHeader:      "X-Client-Host",
+		TrustProxy:       true,
+		TrustProxyConfig: fiber.TrustProxyConfig{Loopback: true},
+	})
+
+	var captured string
+	app.Get("/", func(c fiber.Ctx) error {
+		captured = GetClientIPFiber(c, nil)
+		return c.SendString("OK")
+	})
+
+	client, base := serveApp(t, app, nil)
+	req, err := http.NewRequest(http.MethodGet, base+"/", nil)
+	assert.NoError(t, err)
+	req.Header.Set("X-Client-Host", "not-an-ip")
+	resp, err := client.Do(req)
+	assert.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, "not-an-ip", captured, "an unparseable direct address is returned as-is")
 }
