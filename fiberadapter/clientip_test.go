@@ -199,7 +199,7 @@ func TestGetClientIPFiber_UnparseableDirectIP(t *testing.T) {
 	req.Header.Set("X-Client-Host", "not-an-ip")
 	resp, err := client.Do(req)
 	assert.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	assert.Equal(t, "not-an-ip", captured, "an unparseable direct address is returned as-is")
 }

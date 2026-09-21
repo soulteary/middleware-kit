@@ -66,7 +66,7 @@ func serveApp(t *testing.T, app *fiber.App, state *tls.ConnectionState) (*http.C
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	var served net.Listener = ln
+	served := ln
 	if state != nil {
 		served = &fakeTLSListener{Listener: ln, state: *state}
 	}
