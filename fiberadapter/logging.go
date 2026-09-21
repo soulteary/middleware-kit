@@ -1,11 +1,18 @@
 package fiberadapter
 
 import (
-	"github.com/gofiber/fiber/v3"
 	"strings"
 	"time"
+
+	"github.com/gofiber/fiber/v3"
 )
 
+// RequestLogging returns a Fiber middleware that logs one entry per request. It
+// is the Fiber half of the pair whose net/http half is
+// middleware.RequestLoggingStd, and masks the same sensitive headers.
+//
+// Responses at 400 and above are logged at cfg.ErrorLogLevel, everything else at
+// cfg.LogLevel.
 func RequestLogging(cfg LoggingConfig) fiber.Handler {
 	if cfg.Logger == nil {
 		// No-op middleware if no logger is provided

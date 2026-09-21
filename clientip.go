@@ -240,9 +240,6 @@ func GetClientIP(r *http.Request, trustedConfig *TrustedProxyConfig) string {
 	)
 }
 
-// GetClientIPFiber extracts the real client IP address from a Fiber context.
-// It applies the same trusted-proxy and right-to-left chain resolution as
-// GetClientIP.
 // JoinForwarded splices every X-Forwarded-For field into one chain, in wire
 // order.
 //
@@ -279,8 +276,6 @@ func LastHeaderValue(values []string) string {
 	return ""
 }
 
-// peekAllStrings returns every value of a request header from a Fiber context.
-// fasthttp's Peek -- which c.Get uses -- returns only the first.
 // getRemoteIP extracts and parses the IP from a remote address string.
 func getRemoteIP(remoteAddr string) net.IP {
 	host, _, err := net.SplitHostPort(remoteAddr)

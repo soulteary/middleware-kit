@@ -7,10 +7,11 @@ import (
 	"fmt"
 )
 
-// CertAllowLists holds the precomputed allow-lists of an MTLSConfig so the
-// per-request path does not rebuild them.
-// CertAllowLists holds the CN/OU/SAN allow lists in lookup form.
-// Exported for framework adapters.
+// CertAllowLists holds the CN/OU/SAN allow lists of an MTLSConfig in lookup
+// form, so the per-request path does not rebuild them.
+//
+// Exported so a framework adapter builds them once, as the net/http middleware
+// does.
 type CertAllowLists struct {
 	cns  map[string]bool
 	ous  map[string]bool
@@ -18,6 +19,7 @@ type CertAllowLists struct {
 }
 
 // NewCertAllowLists builds the lookup sets AuthenticateMTLS matches against.
+//
 // Exported for framework adapters.
 func NewCertAllowLists(cfg MTLSConfig) CertAllowLists {
 	l := CertAllowLists{
@@ -124,15 +126,15 @@ func (l CertAllowLists) checkCertificate(cert *x509.Certificate, cfg MTLSConfig)
 
 // AuthenticateMTLS runs the complete mTLS check for a connection state: the
 // certificate must be verified by the TLS layer AND satisfy every restriction
-// in cfg. This is the single entry point used by MTLSAuth, MTLSAuthStd and
-// CombinedAuth, so the combined middleware can no longer accept a certificate
-// that the dedicated middleware would reject.
-// AuthenticateMTLS verifies a request's client certificate against cfg: chain
-// presence, then the CN, OU and SAN allow lists.
+// in cfg -- chain presence, then the CN, OU and DNS SAN allow lists, then
+// CertValidator.
 //
-// Exported so a framework adapter runs the same verification the net/http
-// middleware does. Two copies of a certificate check is how one framework ends
-// up accepting what the other rejects.
+// This is the single entry point for every middleware that authenticates a
+// client certificate, net/http and Fiber alike, so no combined middleware can
+// accept a certificate that a dedicated one would reject. Two copies of a
+// certificate check is how one framework ends up accepting what the other
+// rejects; that is also why it is exported rather than reimplemented in the
+// adapter.
 func AuthenticateMTLS(state *tls.ConnectionState, cfg MTLSConfig, lists CertAllowLists) (*x509.Certificate, error) {
 	cert, err := verifiedPeerCertificate(state)
 	if err != nil {

@@ -13,11 +13,17 @@ package fiberadapter
 
 import (
 	"crypto/subtle"
+	"strings"
+
 	"github.com/gofiber/fiber/v3"
 	middleware "github.com/soulteary/middleware-kit/v2"
-	"strings"
 )
 
+// APIKeyAuth returns a Fiber middleware that authenticates requests by API
+// key. It is the Fiber half of the pair whose net/http half is
+// middleware.APIKeyAuthStd, and reads the key from the same places: the
+// configured header, then the Authorization scheme, then the query parameter --
+// each only where cfg enables it.
 func APIKeyAuth(cfg APIKeyConfig) fiber.Handler {
 	if cfg.HeaderName == "" {
 		cfg.HeaderName = "X-API-Key"

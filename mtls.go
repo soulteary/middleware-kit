@@ -45,9 +45,9 @@ func DefaultMTLSConfig() MTLSConfig {
 	}
 }
 
-// MTLSAuth creates a Fiber middleware for mTLS client certificate authentication.
-// Note: This middleware requires TLS to be properly configured with ClientAuth.
 // MTLSAuthStd creates a standard net/http middleware for mTLS authentication.
+// It requires TLS to be configured with ClientAuth; the Fiber equivalent is
+// fiberadapter.MTLSAuth.
 func MTLSAuthStd(cfg MTLSConfig) func(http.Handler) http.Handler {
 	lists := NewCertAllowLists(cfg)
 
@@ -82,5 +82,3 @@ func MTLSAuthStd(cfg MTLSConfig) func(http.Handler) http.Handler {
 		})
 	}
 }
-
-// handleMTLSError handles mTLS authentication errors.

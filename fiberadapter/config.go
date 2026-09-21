@@ -2,6 +2,7 @@ package fiberadapter
 
 import (
 	"crypto/x509"
+
 	"github.com/gofiber/fiber/v3"
 	middleware "github.com/soulteary/middleware-kit/v2"
 )

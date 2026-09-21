@@ -96,7 +96,6 @@ func StrictSecurityHeadersConfig() SecurityHeadersConfig {
 	}
 }
 
-// SecurityHeaders creates a Fiber middleware that adds security headers.
 // SecurityHeadersStd creates a standard net/http middleware that adds security headers.
 func SecurityHeadersStd(cfg SecurityHeadersConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -149,7 +148,6 @@ func SecurityHeadersStd(cfg SecurityHeadersConfig) func(http.Handler) http.Handl
 	}
 }
 
-// NoCacheHeaders creates a middleware that sets cache-control headers to prevent caching.
 // NoCacheHeadersStd creates a standard net/http middleware that prevents caching.
 func NoCacheHeadersStd() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

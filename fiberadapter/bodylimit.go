@@ -4,6 +4,12 @@ import (
 	"github.com/gofiber/fiber/v3"
 )
 
+// BodyLimit returns a Fiber middleware that refuses requests whose body exceeds
+// cfg.MaxSize (4MB by default). It is the Fiber half of the pair whose net/http
+// half is middleware.BodyLimitStd.
+//
+// Both the advertised Content-Length and the decoded body are checked, because a
+// chunked request advertises no length at all.
 func BodyLimit(cfg BodyLimitConfig) fiber.Handler {
 	if cfg.MaxSize <= 0 {
 		cfg.MaxSize = 4 * 1024 * 1024 // 4MB default

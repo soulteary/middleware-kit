@@ -5,6 +5,12 @@ import (
 	middleware "github.com/soulteary/middleware-kit/v2"
 )
 
+// RateLimit returns a Fiber middleware that rate-limits requests by key. It is
+// the Fiber half of the pair whose net/http half is middleware.RateLimitStd and
+// shares its limiter, so one middleware.RateLimiter can bound a service serving
+// both frameworks.
+//
+// The key comes from cfg.KeyFunc, or from GetClientIPFiber when that is nil.
 func RateLimit(cfg RateLimitConfig) fiber.Handler {
 	if cfg.Limiter == nil {
 		cfg.Limiter = middleware.NewRateLimiter(middleware.DefaultRateLimiterConfig())

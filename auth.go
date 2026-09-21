@@ -29,15 +29,10 @@ type AuthConfig struct {
 	TrustedProxyConfig *TrustedProxyConfig
 }
 
-// CombinedAuth creates a Fiber middleware that tries multiple authentication methods.
-// Authentication methods are tried in order: mTLS > HMAC > API Key.
-// The first successful authentication allows the request through.
-// validateHMAC performs inline HMAC validation without middleware chaining.
-// validateAPIKey performs inline API key validation.
-// handleCombinedAuthError handles combined auth errors.
-// HeaderOrDefault returns the header name or a default value.
-// HeaderOrDefault returns value when non-empty, otherwise fallback.
-// Exported for framework adapters.
+// HeaderOrDefault returns header when non-empty, otherwise defaultValue.
+//
+// Exported so a framework adapter resolves a configured header name to the same
+// default the net/http middlewares use.
 func HeaderOrDefault(header, defaultValue string) string {
 	if header == "" {
 		return defaultValue

@@ -74,7 +74,6 @@ func DefaultLoggingConfig() LoggingConfig {
 	}
 }
 
-// RequestLogging creates a Fiber middleware for request logging.
 func (rw *responseWriter) WriteHeader(status int) {
 	rw.status = status
 	rw.ResponseWriter.WriteHeader(status)

@@ -110,7 +110,6 @@ func DefaultHMACConfig() HMACConfig {
 	}
 }
 
-// HMACAuth creates a Fiber middleware for HMAC signature authentication.
 // HMACAuthStd creates a standard net/http middleware for HMAC signature authentication.
 func HMACAuthStd(cfg HMACConfig) func(http.Handler) http.Handler {
 	// Apply defaults
@@ -279,5 +278,3 @@ func ComputeHMAC(timestamp, service, body, secret string) string {
 	mac.Write([]byte(message))
 	return hex.EncodeToString(mac.Sum(nil))
 }
-
-// handleHMACError handles HMAC authentication errors.

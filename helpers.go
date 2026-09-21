@@ -24,9 +24,8 @@ func IsTimestampValid(timestamp, maxDriftSeconds int64) bool {
 	return drift <= maxDriftSeconds
 }
 
-// ConstantTimeEqual compares two Strings in constant time to prevent timing attacks.
-// ConstantTimeEqual compares two Strings without leaking how much of them
-// matched, or how long the expected value is.
+// ConstantTimeEqual compares two strings in constant time, without leaking how
+// much of them matched or how long the expected value is.
 //
 // subtle.ConstantTimeCompare returns early when the lengths differ, so calling
 // it directly on a secret and an attacker-supplied value leaks the secret's

@@ -34,7 +34,6 @@ func DefaultBodyLimitConfig() BodyLimitConfig {
 	}
 }
 
-// BodyLimit creates a Fiber middleware that limits request body size.
 // BodyLimitStd creates a standard net/http middleware that limits request body size.
 func BodyLimitStd(cfg BodyLimitConfig) func(http.Handler) http.Handler {
 	if cfg.MaxSize <= 0 {

@@ -5,6 +5,10 @@ import (
 	middleware "github.com/soulteary/middleware-kit/v2"
 )
 
+// SecurityHeaders returns a Fiber middleware that sets the response security
+// headers cfg enables. It is the Fiber half of the pair whose net/http half is
+// middleware.SecurityHeadersStd, and takes the root config unchanged -- it has
+// no Fiber-typed hooks.
 func SecurityHeaders(cfg middleware.SecurityHeadersConfig) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		// Set standard security headers
@@ -54,6 +58,9 @@ func SecurityHeaders(cfg middleware.SecurityHeadersConfig) fiber.Handler {
 	}
 }
 
+// NoCacheHeaders returns a Fiber middleware that sets the cache-control headers
+// which keep a response out of every cache. It is the Fiber half of the pair
+// whose net/http half is middleware.NoCacheHeadersStd.
 func NoCacheHeaders() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")

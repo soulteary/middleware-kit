@@ -2,12 +2,19 @@ package fiberadapter
 
 import (
 	"crypto/hmac"
-	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
 	"strconv"
 	"time"
+
+	"github.com/gofiber/fiber/v3"
+	middleware "github.com/soulteary/middleware-kit/v2"
 )
 
+// HMACAuth returns a Fiber middleware that authenticates requests by their HMAC
+// signature. It is the Fiber half of the pair whose net/http half is
+// middleware.HMACAuthStd, and applies the same rules in the same order: the
+// timestamp must be within MaxTimeDrift, the service identifier must be
+// unambiguous for the configured signer, the signature must match, and only then
+// is it recorded with the ReplayGuard.
 func HMACAuth(cfg HMACConfig) fiber.Handler {
 	// Apply defaults
 	if cfg.SignatureHeader == "" {

@@ -53,7 +53,6 @@ func DefaultAPIKeyConfig() APIKeyConfig {
 	}
 }
 
-// APIKeyAuth creates a Fiber middleware for API key authentication.
 // APIKeyAuthStd creates a standard net/http middleware for API key authentication.
 func APIKeyAuthStd(cfg APIKeyConfig) func(http.Handler) http.Handler {
 	if cfg.HeaderName == "" {
@@ -132,5 +131,3 @@ func APIKeyAuthStd(cfg APIKeyConfig) func(http.Handler) http.Handler {
 		})
 	}
 }
-
-// handleAPIKeyError handles API key authentication errors.

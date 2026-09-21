@@ -281,8 +281,6 @@ func (rl *RateLimiter) Reset() {
 	rl.whitelist = make(map[string]bool)
 }
 
-// Stop stops the rate limiter and its cleanup goroutine.
-// RateLimit creates a Fiber middleware for rate limiting.
 // RateLimitStd creates a standard net/http middleware for rate limiting.
 func RateLimitStd(cfg RateLimitConfig) func(http.Handler) http.Handler {
 	if cfg.Limiter == nil {
