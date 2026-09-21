@@ -1,6 +1,3 @@
-// Package middleware provides HTTP middleware functionality for Go services.
-// Includes authentication (API Key, HMAC, mTLS), rate limiting, compression,
-// request body limiting, security headers, and logging middleware.
 package middleware
 
 import (

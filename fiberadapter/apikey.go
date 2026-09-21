@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
+	middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // APIKeyAuth returns a Fiber middleware that authenticates requests by API

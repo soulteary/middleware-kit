@@ -2,7 +2,7 @@ package fiberadapter
 
 import (
 	"github.com/gofiber/fiber/v3"
-	middleware "github.com/soulteary/middleware-kit/v2"
+	middleware "github.com/soulteary/middleware-kit/v3"
 	"github.com/stretchr/testify/assert"
 	"net/http/httptest"
 	"testing"

@@ -1,6 +1,6 @@
 # middleware-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit/v3.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit/v3)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/middleware-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/middleware-kit)
@@ -10,10 +10,15 @@
 一个全面的 Go 服务 HTTP 中间件工具包。提供认证（API Key、HMAC、mTLS）、限流、安全头、请求日志、压缩和请求体限制等中间件，同时支持 Fiber 和标准 net/http。
 
 
-> **v2.3.0 破坏性变更 —— Fiber 支持移入子包。**
-> Fiber 中间件现位于 `github.com/soulteary/middleware-kit/v2/fiberadapter`，
+> **v3.0.0 破坏性变更 —— Fiber 支持移入子包，且 Fiber 的 mTLS 校验开始真正生效。**
+> 导入路径现在是 `github.com/soulteary/middleware-kit/v3`，Fiber 中间件位于
+> `github.com/soulteary/middleware-kit/v3/fiberadapter`，
 > 于是导入根包不再把 Fiber（以及 fasthttp）链接进用不到它的二进制。
 > 对一个 net/http 服务来说，这意味着**少链接 25 个包、少 11 个模块、二进制小 14%**。
+>
+> **如果你在用 Fiber 的 `MTLSAuth` 或 `CombinedAuth`，上线前请先读下文的
+> 「升级说明（v3.0.0）」一节** —— 它们本该执行的证书校验在 Fiber v3 下
+> 从未执行过，现在会了。
 >
 > 每个中间件本来就是成对的 —— `XxxAuth`（Fiber）与 `XxxAuthStd`（net/http）。
 > **`Std` 一侧的名字完全不变**，Fiber 一侧把 `middleware.` 换成 `fiberadapter.` 即可：
@@ -73,7 +78,7 @@
 ## 安装
 
 ```bash
-go get github.com/soulteary/middleware-kit/v2
+go get github.com/soulteary/middleware-kit/v3
 ```
 
 ## 使用方法
@@ -83,8 +88,8 @@ go get github.com/soulteary/middleware-kit/v2
 ```go
 import (
     "github.com/gofiber/fiber/v3"
-    middleware "github.com/soulteary/middleware-kit/v2"
-    "github.com/soulteary/middleware-kit/v2/fiberadapter"
+    middleware "github.com/soulteary/middleware-kit/v3"
+    "github.com/soulteary/middleware-kit/v3/fiberadapter"
 )
 
 app := fiber.New()
@@ -419,7 +424,7 @@ masked := middleware.MaskPhone("+1234567890")
 ```go
 import (
     "net/http"
-    middleware "github.com/soulteary/middleware-kit/v2"
+    middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // API Key 认证
@@ -476,6 +481,51 @@ middleware-kit/
 └── *_test.go           # 完整测试
 ```
 
+## 升级说明（v3.0.0）
+
+**导入路径变了，并且有一项 Fiber 安全校验开始生效。** 升级线上部署前请先读 mTLS 那条。
+
+- **模块路径现在是 `/v3`。** 需要更新所有 import：
+  `github.com/soulteary/middleware-kit/v2` → `github.com/soulteary/middleware-kit/v3`。
+  Go 把不同主版本当作不同模块，所以不会自动升级，你迁移之前 v2 线照常可用。
+- **Fiber 中间件移入 `fiberadapter` 子包。** 对照表见本文件开头。`Std`（net/http）
+  一侧的名字和行为完全不变 —— 每一个都与 v2 的实现逐字节一致。
+- **⚠️ Fiber 的 mTLS 校验此前从未执行，现在会了。** `MTLSAuth` 和 `CombinedAuth`
+  此前用 `c.Protocol() == "https"` 作为证书校验的前置条件。而在 Fiber v3 中
+  `Protocol()` 返回的是 HTTP *版本*（`"HTTP/1.1"`），所以该条件永远不成立，
+  它后面的一切都被跳过了：
+
+  | 配置 | 应该是 | v2.0.0–v2.2.0 实际是 |
+  |---|---|---|
+  | `MTLSAuth`，`RequireCert: true`，已校验证书且 CN 在白名单内 | 200 | **401** —— 拒绝一切 |
+  | `MTLSAuth`，`RequireCert: false`，已校验证书但 CN **不在**白名单 | 401 | **200** —— fail-open |
+  | `CombinedAuth`，仅配置 mTLS，已校验证书 | 200 | **401** |
+
+  这对你意味着什么：
+
+  - **如果你设置了 `RequireCert: false`**，本意是「递交证书时校验，未递交则放行匿名」，
+    那么此前什么都没校验。`AllowedCNs`、`AllowedOUs`、`AllowedDNSSANs` 和
+    `CertValidator` 现在会真正执行，于是**白名单之外的证书会开始被拒绝，而它此前能通过**。
+    请确认客户端实际递交的证书确实匹配你配置的名单。
+  - **如果你用 `CombinedAuth` 且配置了 `MTLSConfig`**，mTLS 方案此前从未被尝试：
+    仅配置 mTLS 的 `AuthConfig` 会拒绝一切请求，而混合配置则会静默地向已经递交了
+    有效证书的客户端索要 HMAC 或 API Key。现在 mTLS 会真正完成认证，
+    这些客户端不再被索要其他凭据。
+  - **明文请求两个方向都不受影响**：设置了 `RequireCert` 时返回 401 且 reason 为
+    `certificate_required`，未设置时放行。
+
+  这里是**删掉**了 scheme 前置判断，而不是把它改对。`AuthenticateMTLS` 自己读取 TLS
+  连接状态，并把明文连接报告为「证书缺失」—— 正是 `RequireCert: false` 本该放行的那个
+  条件 —— 于是 Fiber 中间件现在与 `MTLSAuthStd` 结构一致，后者只看 `r.TLS`。
+  改用 `c.Scheme()` 并不安全：对于携带可信代理所设 `X-Forwarded-Proto` 的明文请求，
+  它也会返回 `"https"`，而转发头无法证明客户端证书是递交给*本*进程的。
+- **新增 API**：两侧共用的校验逻辑被导出，以保证适配器执行的就是 net/http 中间件执行的
+  那份代码 —— `AuthenticateMTLS`、`NewCertAllowLists`、`CertAllowLists`、
+  `CertificateAbsent`、`ConstantTimeEqual`、`HMACConfig.ExpectedSignature`、
+  `HMACConfig.ServiceAllowed`、`ParseTimestamp`、`IsTimestampValid`、
+  `ReplayRetention`、`TrustedProxyConfig.ClientIPFromForwarded`、`JoinForwarded`、
+  `LastHeaderValue` 和 `HeaderOrDefault`。全部是新增，没有移除。
+
 ## 升级说明（v2.2.0）
 
 **其中三条会拒绝此前能通过认证的请求。** 升级线上部署前请先读 mTLS 和 HMAC 两条。
@@ -519,10 +569,10 @@ middleware-kit/
 ## 依赖要求
 
 - **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
-- github.com/gofiber/fiber/v3 v3.4.0+（Fiber 中间件）
-- github.com/rs/zerolog v1.34.0+（日志）
+- github.com/gofiber/fiber/v3 v3.5.0+（仅 `fiberadapter` 子包需要）
+- github.com/rs/zerolog v1.35.0+（日志）
 
-此 v2 模块版本面向 Fiber v3。仍使用 Fiber v2 的应用应继续使用 `github.com/soulteary/middleware-kit` v1。
+此 v3 模块版本面向 Fiber v3。仍使用 Fiber v2 的应用应继续使用 `github.com/soulteary/middleware-kit` v1。
 
 ## 测试覆盖
 
@@ -536,6 +586,15 @@ go test ./... -coverprofile=coverage.out -covermode=atomic
 go tool cover -html=coverage.out -o coverage.html
 go tool cover -func=coverage.out
 ```
+
+## 变更日志
+
+版本历史与升级说明见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 安全
+
+报告漏洞请见 [SECURITY.md](SECURITY.md) —— 请私下报告，不要开公开 issue。
+该文件同时记录了 v2.0.0–v2.2.0 中一个不会执行的客户端证书校验，该问题已在 v3.0.0 修复。
 
 ## 贡献
 

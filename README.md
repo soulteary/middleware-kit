@@ -1,6 +1,6 @@
 # middleware-kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/middleware-kit/v3.svg)](https://pkg.go.dev/github.com/soulteary/middleware-kit/v3)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/middleware-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/middleware-kit)
@@ -10,11 +10,18 @@
 A comprehensive HTTP middleware toolkit for Go services. This package provides authentication (API Key, HMAC, mTLS), rate limiting, security headers, request logging, compression, and body limiting middleware for both Fiber and standard net/http.
 
 
-> **Breaking in v2.3.0 — Fiber support moved to a subpackage.**
-> The Fiber middleware is now `github.com/soulteary/middleware-kit/v2/fiberadapter`,
-> so importing the root package no longer links Fiber (and fasthttp) into
-> binaries that never use it. In a net/http service that means **25 fewer
-> linked packages, 11 fewer modules and a 14% smaller binary**.
+> **Breaking in v3.0.0 — Fiber support moved to a subpackage, and the Fiber
+> mTLS check now runs.**
+> The import path is now `github.com/soulteary/middleware-kit/v3`, and the Fiber
+> middleware is `github.com/soulteary/middleware-kit/v3/fiberadapter`, so
+> importing the root package no longer links Fiber (and fasthttp) into binaries
+> that never use it. In a net/http service that means **25 fewer linked
+> packages, 11 fewer modules and a 14% smaller binary**.
+>
+> **If you use the Fiber `MTLSAuth` or `CombinedAuth`, read
+> [Upgrade Notes (v3.0.0)](#upgrade-notes-v300) before deploying** — the
+> certificate check they were supposed to run never ran under Fiber v3, and now
+> does.
 >
 > Every middleware was already a pair — `XxxAuth` (Fiber) and `XxxAuthStd`
 > (net/http). **The `Std` names are unchanged.** Drop the `middleware.`
@@ -79,7 +86,7 @@ A comprehensive HTTP middleware toolkit for Go services. This package provides a
 ## Installation
 
 ```bash
-go get github.com/soulteary/middleware-kit/v2
+go get github.com/soulteary/middleware-kit/v3
 ```
 
 ## Usage
@@ -89,8 +96,8 @@ go get github.com/soulteary/middleware-kit/v2
 ```go
 import (
     "github.com/gofiber/fiber/v3"
-    middleware "github.com/soulteary/middleware-kit/v2"
-    "github.com/soulteary/middleware-kit/v2/fiberadapter"
+    middleware "github.com/soulteary/middleware-kit/v3"
+    "github.com/soulteary/middleware-kit/v3/fiberadapter"
 )
 
 app := fiber.New()
@@ -437,7 +444,7 @@ All middleware support both Fiber and standard net/http:
 ```go
 import (
     "net/http"
-    middleware "github.com/soulteary/middleware-kit/v2"
+    middleware "github.com/soulteary/middleware-kit/v3"
 )
 
 // API Key authentication
@@ -494,6 +501,60 @@ middleware-kit/
 └── *_test.go           # Comprehensive tests
 ```
 
+## Upgrade Notes (v3.0.0)
+
+**The import path changed and one Fiber security check starts working.** Read the
+mTLS item before upgrading a live deployment.
+
+- **The module path is now `/v3`.** Update every import:
+  `github.com/soulteary/middleware-kit/v2` → `github.com/soulteary/middleware-kit/v3`.
+  Go treats a major version as a separate module, so nothing upgrades on its own
+  and the v2 line keeps working until you move.
+- **Fiber middleware moved to the `fiberadapter` subpackage.** See the table at
+  the top of this file. The `Std` (net/http) names and behaviour are unchanged —
+  every one of them is byte-identical to its v2 implementation.
+- **⚠️ The Fiber mTLS check never ran, and now does.** `MTLSAuth` and
+  `CombinedAuth` gated their certificate check on `c.Protocol() == "https"`. In
+  Fiber v3, `Protocol()` reports the HTTP *version* — it returns `"HTTP/1.1"` —
+  so that test was never true and everything behind it was skipped:
+
+  | Config | Should be | Was, in v2.0.0–v2.2.0 |
+  |---|---|---|
+  | `MTLSAuth`, `RequireCert: true`, verified cert matching `AllowedCNs` | 200 | **401** — deny-all |
+  | `MTLSAuth`, `RequireCert: false`, verified cert **failing** `AllowedCNs` | 401 | **200** — fail-open |
+  | `CombinedAuth`, mTLS the only scheme, verified cert | 200 | **401** |
+
+  What this means for you:
+
+  - **If you set `RequireCert: false`** expecting *"verify a certificate when one
+    is presented, allow anonymous otherwise"*, nothing was being verified.
+    `AllowedCNs`, `AllowedOUs`, `AllowedDNSSANs` and `CertValidator` now actually
+    run, so **a certificate outside your allow-list starts being rejected where
+    it used to pass**. Check that the certificates your clients present really do
+    match the lists you configured.
+  - **If you use `CombinedAuth` with an `MTLSConfig`**, the mTLS scheme was never
+    attempted: an mTLS-only `AuthConfig` refused everything, and a mixed one
+    silently demanded HMAC or an API key from clients that had already presented
+    a certificate. mTLS now authenticates, so those clients stop being asked for
+    the other credentials.
+  - **Plaintext requests are unaffected** in both directions: 401 with reason
+    `certificate_required` when `RequireCert` is set, pass-through when it is not.
+
+  The scheme pre-check was removed rather than repaired. `AuthenticateMTLS` reads
+  the TLS connection state itself and reports a plaintext connection as an absent
+  certificate — the one condition `RequireCert: false` is meant to wave through —
+  so the Fiber middleware now has the same shape as `MTLSAuthStd`, which consults
+  `r.TLS` and nothing else. `c.Scheme()` would not be a safe replacement: it
+  answers `"https"` for a plaintext request carrying `X-Forwarded-Proto` from a
+  trusted proxy, and a forwarded header cannot establish that a client
+  certificate was presented to *this* process.
+- **New API**: the checks both halves share are exported so an adapter runs the
+  same code the net/http middleware runs — `AuthenticateMTLS`,
+  `NewCertAllowLists`, `CertAllowLists`, `CertificateAbsent`, `ConstantTimeEqual`,
+  `HMACConfig.ExpectedSignature`, `HMACConfig.ServiceAllowed`, `ParseTimestamp`,
+  `IsTimestampValid`, `ReplayRetention`, `TrustedProxyConfig.ClientIPFromForwarded`,
+  `JoinForwarded`, `LastHeaderValue` and `HeaderOrDefault`. All additive.
+
 ## Upgrade Notes (v2.2.0)
 
 **Three of these reject requests that previously authenticated.** Read the mTLS
@@ -547,10 +608,10 @@ and HMAC items before upgrading a live deployment.
 ## Requirements
 
 - **Go 1.27+** (`go.mod` declares `go 1.27.0`)
-- github.com/gofiber/fiber/v3 v3.4.0+ (for Fiber middleware)
-- github.com/rs/zerolog v1.34.0+ (for logging)
+- github.com/gofiber/fiber/v3 v3.5.0+ (for the `fiberadapter` subpackage only)
+- github.com/rs/zerolog v1.35.0+ (for logging)
 
-This v2 module line targets Fiber v3. Applications that still use Fiber v2 should remain on `github.com/soulteary/middleware-kit` v1.
+This v3 module line targets Fiber v3. Applications that still use Fiber v2 should remain on `github.com/soulteary/middleware-kit` v1.
 
 ## Test Coverage
 
@@ -564,6 +625,17 @@ go test ./... -coverprofile=coverage.out -covermode=atomic
 go tool cover -html=coverage.out -o coverage.html
 go tool cover -func=coverage.out
 ```
+
+## Changelog
+
+Release history and upgrade notes: [CHANGELOG.md](CHANGELOG.md).
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md) — please report
+privately rather than in a public issue. That file also records a
+client-certificate check that does not execute in v2.0.0–v2.2.0 and is fixed in
+v3.0.0.
 
 ## Contributing
 
