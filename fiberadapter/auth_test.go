@@ -2,14 +2,16 @@ package fiberadapter
 
 import (
 	"bytes"
-	"github.com/gofiber/fiber/v3"
-	"github.com/rs/zerolog"
-	middleware "github.com/soulteary/middleware-kit/v2"
-	"github.com/stretchr/testify/assert"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/rs/zerolog"
+	middleware "github.com/soulteary/middleware-kit/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestCombinedAuth(t *testing.T) {
@@ -694,5 +696,103 @@ func TestCombinedAuth_MTLSOnly(t *testing.T) {
 		resp, err := app.Test(req)
 		assert.NoError(t, err)
 		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	})
+}
+
+// TestCombinedAuth_MTLSScheme covers the mTLS scheme inside CombinedAuth, which
+// no test could reach while the scheme was gated on c.Protocol() == "https".
+func TestCombinedAuth_MTLSScheme(t *testing.T) {
+	t.Run("a verified certificate authenticates the request", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf).Level(zerolog.DebugLevel)
+
+		app := fiber.New()
+		app.Use(CombinedAuth(AuthConfig{AuthConfig: middleware.AuthConfig{
+			MTLSConfig: &middleware.MTLSConfig{RequireCert: true, AllowedCNs: []string{"svc-a"}},
+			Logger:     &logger,
+		}}))
+		app.Get("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		resp := serveOverTLSState(t, app, verifiedState(testCert("svc-a", nil, nil)), "/")
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.Contains(t, buf.String(), "Request authenticated via mTLS")
+	})
+
+	t.Run("a rejected certificate falls through to the API key", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf).Level(zerolog.DebugLevel)
+
+		app := fiber.New()
+		app.Use(CombinedAuth(AuthConfig{AuthConfig: middleware.AuthConfig{
+			MTLSConfig:   &middleware.MTLSConfig{RequireCert: true, AllowedCNs: []string{"svc-a"}},
+			APIKeyConfig: &middleware.APIKeyConfig{APIKey: "k3y"},
+			Logger:       &logger,
+		}}))
+		app.Get("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		client, base := serveApp(t, app, ptrTLSState(verifiedState(testCert("intruder", nil, nil))))
+		req, err := http.NewRequest(http.MethodGet, base+"/", nil)
+		assert.NoError(t, err)
+		req.Header.Set("X-API-Key", "k3y")
+		resp, err := client.Do(req)
+		assert.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+		assert.Contains(t, buf.String(), "mTLS authentication did not apply")
+		assert.Contains(t, buf.String(), "Request authenticated via API Key")
+	})
+
+	t.Run("mTLS-only config rejects a certificate outside the allow-list", func(t *testing.T) {
+		app := fiber.New()
+		app.Use(CombinedAuth(AuthConfig{AuthConfig: middleware.AuthConfig{
+			MTLSConfig: &middleware.MTLSConfig{RequireCert: true, AllowedCNs: []string{"svc-a"}},
+		}}))
+		app.Get("/", func(c fiber.Ctx) error { return c.SendString("OK") })
+
+		resp := serveOverTLSState(t, app, verifiedState(testCert("intruder", nil, nil)), "/")
+		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+	})
+}
+
+// TestValidateHMAC_RejectionBranches covers the two `return false` branches of
+// validateHMAC that the combined-auth tests never reach.
+func TestValidateHMAC_RejectionBranches(t *testing.T) {
+	const secret = "s3cr3t"
+
+	run := func(cfg middleware.HMACConfig, service string, guard middleware.ReplayGuard, times int) []int {
+		cfg.Secret = secret
+		cfg.ReplayGuard = guard
+
+		app := fiber.New()
+		app.Post("/x", func(c fiber.Ctx) error {
+			if !validateHMAC(c, cfg) {
+				return c.SendStatus(http.StatusUnauthorized)
+			}
+			return c.SendStatus(http.StatusOK)
+		})
+
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		body := "{}"
+		codes := make([]int, 0, times)
+		for i := 0; i < times; i++ {
+			req := httptest.NewRequest("POST", "/x", bytes.NewBufferString(body))
+			req.Header.Set("X-Signature", middleware.ComputeHMAC(ts, service, body, secret))
+			req.Header.Set("X-Timestamp", ts)
+			req.Header.Set("X-Service", service)
+			resp, err := app.Test(req)
+			assert.NoError(t, err)
+			codes = append(codes, resp.StatusCode)
+		}
+		return codes
+	}
+
+	t.Run("service carrying the legacy delimiter is refused", func(t *testing.T) {
+		assert.Equal(t, []int{http.StatusUnauthorized}, run(middleware.HMACConfig{}, "svc:extra", nil, 1))
+	})
+
+	t.Run("a replayed signature is refused on the second request", func(t *testing.T) {
+		codes := run(middleware.HMACConfig{}, "svc", middleware.NewMemoryReplayGuard(), 2)
+		assert.Equal(t, []int{http.StatusOK, http.StatusUnauthorized}, codes)
 	})
 }

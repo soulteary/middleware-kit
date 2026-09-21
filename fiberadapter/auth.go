@@ -1,11 +1,20 @@
 package fiberadapter
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v3"
 	middleware "github.com/soulteary/middleware-kit/v2"
-	"time"
 )
 
+// CombinedAuth returns a Fiber middleware that tries every configured
+// authentication scheme in order of decreasing strength -- mTLS, then HMAC, then
+// API key -- and admits the request on the first that succeeds.
+//
+// Each scheme runs the same check its dedicated middleware runs, so a request
+// this middleware admits is one MTLSAuth, HMACAuth or APIKeyAuth would admit
+// too. With no scheme configured the request is refused unless AllowNoAuth is
+// set.
 func CombinedAuth(cfg AuthConfig) fiber.Handler {
 	var mtlsLists middleware.CertAllowLists
 	if cfg.MTLSConfig != nil {
@@ -35,7 +44,17 @@ func CombinedAuth(cfg AuthConfig) fiber.Handler {
 		// returned c.Next(), which meant AllowedCNs, AllowedOUs,
 		// AllowedDNSSANs and CertValidator were all silently ignored here --
 		// any client certificate, including a self-signed one, authenticated.
-		if hasMTLS && c.Protocol() == "https" {
+		//
+		// There is no `c.Protocol() == "https"` guard in front of it: in Fiber
+		// v3 Protocol reports the HTTP VERSION ("HTTP/1.1"), so such a guard
+		// was never satisfied and this scheme was never attempted -- an
+		// mTLS-only AuthConfig rejected every request, and a mixed one
+		// silently demanded HMAC or an API key from clients that had already
+		// presented a valid certificate. AuthenticateMTLS reads the TLS
+		// connection state itself and reports a plaintext connection as an
+		// absent certificate, so a non-TLS request simply falls through to the
+		// remaining methods.
+		if hasMTLS {
 			cert, err := middleware.AuthenticateMTLS(c.RequestCtx().TLSConnectionState(), *cfg.MTLSConfig, mtlsLists)
 			if err == nil {
 				if cfg.Logger != nil {
