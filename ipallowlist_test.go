@@ -1,12 +1,11 @@
 package middleware
 
 import (
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestIPAllowlistMiddleware_Empty(t *testing.T) {
@@ -85,4 +84,22 @@ func TestIPAllowlistMiddlewareFromConfig_OnDenied(t *testing.T) {
 	handler.ServeHTTP(w, req)
 	require.True(t, denied)
 	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestParseIPAllowlist_EmptyEntries covers the skip for empty entries, which a
+// trailing comma or a doubled separator produces.
+func TestParseIPAllowlist_EmptyEntries(t *testing.T) {
+	ips, nets := parseIPAllowlist("127.0.0.1,,10.0.0.0/8, ,")
+	assert.True(t, ips["127.0.0.1"])
+	assert.Len(t, ips, 1, "empty entries are skipped rather than stored")
+	assert.Len(t, nets, 1)
+}
+
+// TestIsIPInAllowlist_UnparseableIP covers the early return for an address that
+// is not an IP -- a denial, never an allow.
+func TestIsIPInAllowlist_UnparseableIP(t *testing.T) {
+	ips, nets := parseIPAllowlist("127.0.0.1,10.0.0.0/8")
+	assert.False(t, isIPInAllowlist("not-an-ip", ips, nets))
+	assert.False(t, isIPInAllowlist("", ips, nets))
+	assert.True(t, isIPInAllowlist("10.1.2.3", ips, nets))
 }

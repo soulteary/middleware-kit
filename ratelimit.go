@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 )
 
@@ -282,95 +281,6 @@ func (rl *RateLimiter) Reset() {
 	rl.whitelist = make(map[string]bool)
 }
 
-// Stop stops the rate limiter and its cleanup goroutine.
-func (rl *RateLimiter) Stop() {
-	rl.stopOnce.Do(func() {
-		rl.cleanup.Stop()
-		close(rl.stopCh)
-		rl.wg.Wait()
-	})
-}
-
-// RateLimitConfig configures the rate limit middleware.
-type RateLimitConfig struct {
-	// Limiter is the rate limiter to use.
-	// If nil, a new one is created with default settings.
-	Limiter *RateLimiter
-
-	// KeyFunc extracts the key to use for rate limiting from the request.
-	// Default: uses client IP
-	KeyFunc func(c fiber.Ctx) string
-
-	// ErrorHandler is called when the rate limit is exceeded.
-	ErrorHandler func(c fiber.Ctx) error
-
-	// SkipPaths is a list of paths to skip rate limiting.
-	SkipPaths []string
-
-	// Logger for logging rate limit events.
-	Logger *zerolog.Logger
-
-	// TrustedProxyConfig for client IP detection.
-	TrustedProxyConfig *TrustedProxyConfig
-
-	// OnLimitReached is called when the rate limit is reached.
-	// Useful for recording metrics.
-	OnLimitReached func(key string)
-}
-
-// RateLimit creates a Fiber middleware for rate limiting.
-func RateLimit(cfg RateLimitConfig) fiber.Handler {
-	if cfg.Limiter == nil {
-		cfg.Limiter = NewRateLimiter(DefaultRateLimiterConfig())
-	}
-
-	skipPathMap := make(map[string]bool)
-	for _, p := range cfg.SkipPaths {
-		skipPathMap[p] = true
-	}
-
-	return func(c fiber.Ctx) error {
-		// Skip if path is in skip list
-		if skipPathMap[c.Path()] {
-			return c.Next()
-		}
-
-		// Get the key for rate limiting
-		var key string
-		if cfg.KeyFunc != nil {
-			key = cfg.KeyFunc(c)
-		} else {
-			key = GetClientIPFiber(c, cfg.TrustedProxyConfig)
-		}
-
-		// Check rate limit
-		if !cfg.Limiter.Allow(key) {
-			if cfg.OnLimitReached != nil {
-				cfg.OnLimitReached(key)
-			}
-
-			if cfg.Logger != nil {
-				cfg.Logger.Warn().
-					Str("key", key).
-					Str("path", c.Path()).
-					Str("method", c.Method()).
-					Msg("Rate limit exceeded")
-			}
-
-			if cfg.ErrorHandler != nil {
-				return cfg.ErrorHandler(c)
-			}
-
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"ok":     false,
-				"reason": "rate_limited",
-			})
-		}
-
-		return c.Next()
-	}
-}
-
 // RateLimitStd creates a standard net/http middleware for rate limiting.
 func RateLimitStd(cfg RateLimitConfig) func(http.Handler) http.Handler {
 	if cfg.Limiter == nil {
@@ -414,4 +324,33 @@ func RateLimitStd(cfg RateLimitConfig) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RateLimitConfig configures the rate limit middleware.
+type RateLimitConfig struct {
+	// Limiter is the rate limiter to use.
+	// If nil, a new one is created with default settings.
+	Limiter *RateLimiter
+
+	// SkipPaths is a list of paths to skip rate limiting.
+	SkipPaths []string
+
+	// Logger for logging rate limit events.
+	Logger *zerolog.Logger
+
+	// TrustedProxyConfig for client IP detection.
+	TrustedProxyConfig *TrustedProxyConfig
+
+	// OnLimitReached is called when the rate limit is reached.
+	// Useful for recording metrics.
+	OnLimitReached func(key string)
+}
+
+// Stop stops the rate limiter and its cleanup goroutine.
+func (rl *RateLimiter) Stop() {
+	rl.stopOnce.Do(func() {
+		rl.cleanup.Stop()
+		close(rl.stopCh)
+		rl.wg.Wait()
+	})
 }

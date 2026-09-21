@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"compress/gzip"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -320,4 +321,42 @@ func TestCompressStd_GzipWriter(t *testing.T) {
 
 		assert.Equal(t, "gzip", rr.Header().Get("Content-Encoding"))
 	})
+}
+
+// failingWriter is an http.ResponseWriter whose Write always fails, the shape a
+// client that disconnects mid-response produces.
+type failingWriter struct {
+	header http.Header
+	code   int
+}
+
+func (w *failingWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+func (w *failingWriter) Write([]byte) (int, error) { return 0, errors.New("connection reset by peer") }
+func (w *failingWriter) WriteHeader(code int)      { w.code = code }
+
+// TestCompressStd_CloseErrorIsIgnored covers the error arm of the deferred
+// Close: a gzip stream cannot be finished once the connection is gone, and the
+// middleware must return rather than panic or propagate.
+func TestCompressStd_CloseErrorIsIgnored(t *testing.T) {
+	w := &failingWriter{}
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	handler := CompressStd(CompressConfig{
+		MinSize:      16,
+		ContentTypes: []string{"text/plain"},
+	})(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.Header().Set("Content-Type", "text/plain")
+		// Long enough to pass MinSize, so the response is really gzipped and
+		// Close has a stream to finish.
+		_, _ = rw.Write([]byte(strings.Repeat("compress me please ", 64)))
+	}))
+
+	assert.NotPanics(t, func() { handler.ServeHTTP(w, req) })
+	assert.Equal(t, "gzip", w.Header().Get("Content-Encoding"))
 }

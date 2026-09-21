@@ -9,6 +9,40 @@
 
 一个全面的 Go 服务 HTTP 中间件工具包。提供认证（API Key、HMAC、mTLS）、限流、安全头、请求日志、压缩和请求体限制等中间件，同时支持 Fiber 和标准 net/http。
 
+
+> **v2.3.0 破坏性变更 —— Fiber 支持移入子包。**
+> Fiber 中间件现位于 `github.com/soulteary/middleware-kit/v2/fiberadapter`，
+> 于是导入根包不再把 Fiber（以及 fasthttp）链接进用不到它的二进制。
+> 对一个 net/http 服务来说，这意味着**少链接 25 个包、少 11 个模块、二进制小 14%**。
+>
+> 每个中间件本来就是成对的 —— `XxxAuth`（Fiber）与 `XxxAuthStd`（net/http）。
+> **`Std` 一侧的名字完全不变**，Fiber 一侧把 `middleware.` 换成 `fiberadapter.` 即可：
+>
+> | 原来 | 现在 |
+> |---|---|
+> | `middleware.APIKeyAuth(cfg)` | `fiberadapter.APIKeyAuth(cfg)` |
+> | `middleware.HMACAuth(cfg)` | `fiberadapter.HMACAuth(cfg)` |
+> | `middleware.MTLSAuth(cfg)` | `fiberadapter.MTLSAuth(cfg)` |
+> | `middleware.CombinedAuth(cfg)` | `fiberadapter.CombinedAuth(cfg)` |
+> | `middleware.RateLimit(cfg)` | `fiberadapter.RateLimit(cfg)` |
+> | `middleware.BodyLimit(cfg)` | `fiberadapter.BodyLimit(cfg)` |
+> | `middleware.SecurityHeaders(cfg)` | `fiberadapter.SecurityHeaders(cfg)` |
+> | `middleware.NoCacheHeaders()` | `fiberadapter.NoCacheHeaders()` |
+> | `middleware.RequestLogging(cfg)` | `fiberadapter.RequestLogging(cfg)` |
+> | `middleware.GetClientIPFiber(c, cfg)` | `fiberadapter.GetClientIPFiber(c, cfg)` |
+>
+> fiber 类型的钩子一并搬走。`ErrorHandler`、`SuccessHandler`、`KeyFunc`、
+> `CustomFields` 的类型是 `func(fiber.Ctx) ...`，正是它们把 Fiber 拖进根包，
+> 现在它们在 `fiberadapter.APIKeyConfig` 等配置上，这些配置内嵌根包配置，
+> 因此其余字段原封不动、与 `Std` 一侧共用：
+>
+> ```go
+> fiberadapter.APIKeyAuth(fiberadapter.APIKeyConfig{
+>     APIKeyConfig: middleware.APIKeyConfig{APIKey: "..."},
+>     ErrorHandler: func(c fiber.Ctx, err error) error { ... },
+> })
+> ```
+
 ## 功能特性
 
 - **认证中间件**
@@ -50,21 +84,26 @@ go get github.com/soulteary/middleware-kit/v2
 import (
     "github.com/gofiber/fiber/v3"
     middleware "github.com/soulteary/middleware-kit/v2"
+    "github.com/soulteary/middleware-kit/v2/fiberadapter"
 )
 
 app := fiber.New()
 
 // 简单的 API Key 认证
-app.Use(middleware.APIKeyAuth(middleware.APIKeyConfig{
-    APIKey: "your-secret-api-key",
+app.Use(fiberadapter.APIKeyAuth(fiberadapter.APIKeyConfig{
+    APIKeyConfig: middleware.APIKeyConfig{
+        APIKey: "your-secret-api-key",
+    },
 }))
 
 // 支持多种来源
-app.Use(middleware.APIKeyAuth(middleware.APIKeyConfig{
-    APIKey:         "your-secret-api-key",
-    HeaderName:     "X-API-Key",           // 检查此 Header
-    AuthScheme:     "Bearer",               // 也检查 Authorization: Bearer <key>
-    QueryParamName: "api_key",              // 也检查 ?api_key=<key>
+app.Use(fiberadapter.APIKeyAuth(fiberadapter.APIKeyConfig{
+    APIKeyConfig: middleware.APIKeyConfig{
+        APIKey:         "your-secret-api-key",
+        HeaderName:     "X-API-Key",           // 检查此 Header
+        AuthScheme:     "Bearer",               // 也检查 Authorization: Bearer <key>
+        QueryParamName: "api_key",              // 也检查 ?api_key=<key>
+    },
 }))
 ```
 
@@ -72,8 +111,10 @@ app.Use(middleware.APIKeyAuth(middleware.APIKeyConfig{
 
 ```go
 // 基础 HMAC 认证
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
-    Secret: "your-hmac-secret",
+app.Use(fiberadapter.HMACAuth(fiberadapter.HMACConfig{
+    HMACConfig: middleware.HMACConfig{
+        Secret: "your-hmac-secret",
+    },
 }))
 
 // 支持密钥轮换
@@ -81,11 +122,13 @@ keys := map[string]string{
     "key-v1": "secret-v1",
     "key-v2": "secret-v2",
 }
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
-    KeyProvider: func(keyID string) string {
-        return keys[keyID]
+app.Use(fiberadapter.HMACAuth(fiberadapter.HMACConfig{
+    HMACConfig: middleware.HMACConfig{
+        KeyProvider: func(keyID string) string {
+            return keys[keyID]
+        },
+        MaxTimeDrift: 5 * time.Minute,
     },
-    MaxTimeDrift: 5 * time.Minute,
 }))
 
 // 客户端侧计算签名
@@ -103,9 +146,11 @@ signature := middleware.ComputeHMAC(timestamp, "service-name", requestBody, secr
 成为单射。改变被签名的字节会一次性让所有已部署的签名方失效，所以这是可选项：
 
 ```go
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
-    Secret:               "your-hmac-secret",
-    RequestSignatureFunc: middleware.ComputeHMACBound,
+app.Use(fiberadapter.HMACAuth(fiberadapter.HMACConfig{
+    HMACConfig: middleware.HMACConfig{
+        Secret:               "your-hmac-secret",
+        RequestSignatureFunc: middleware.ComputeHMACBound,
+    },
 }))
 ```
 
@@ -134,9 +179,11 @@ signature := middleware.ComputeHMACBound(middleware.SignatureInput{
 每个已签名的请求在 `MaxTimeDrift` 期间都是可重放的：
 
 ```go
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
-    Secret:      "your-hmac-secret",
-    ReplayGuard: middleware.NewMemoryReplayGuard(), // 单实例
+app.Use(fiberadapter.HMACAuth(fiberadapter.HMACConfig{
+    HMACConfig: middleware.HMACConfig{
+        Secret:      "your-hmac-secret",
+        ReplayGuard: middleware.NewMemoryReplayGuard(), // 单实例
+    },
 }))
 ```
 
@@ -155,26 +202,32 @@ type ReplayGuard interface {
 
 ```go
 // 基础 mTLS
-app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
-    RequireCert: true,
+app.Use(fiberadapter.MTLSAuth(fiberadapter.MTLSConfig{
+    MTLSConfig: middleware.MTLSConfig{
+        RequireCert: true,
+    },
 }))
 
 // 限制 CN/OU
-app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
-    RequireCert: true,
-    AllowedCNs:  []string{"service-a", "service-b"},
-    AllowedOUs:  []string{"engineering"},
+app.Use(fiberadapter.MTLSAuth(fiberadapter.MTLSConfig{
+    MTLSConfig: middleware.MTLSConfig{
+        RequireCert: true,
+        AllowedCNs:  []string{"service-a", "service-b"},
+        AllowedOUs:  []string{"engineering"},
+    },
 }))
 
 // 自定义验证器
-app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
-    RequireCert: true,
-    CertValidator: func(cert *x509.Certificate) error {
-        // 自定义验证逻辑
-        if cert.NotAfter.Before(time.Now().Add(24 * time.Hour)) {
-            return errors.New("证书即将过期")
-        }
-        return nil
+app.Use(fiberadapter.MTLSAuth(fiberadapter.MTLSConfig{
+    MTLSConfig: middleware.MTLSConfig{
+        RequireCert: true,
+        CertValidator: func(cert *x509.Certificate) error {
+            // 自定义验证逻辑
+            if cert.NotAfter.Before(time.Now().Add(24 * time.Hour)) {
+                return errors.New("证书即将过期")
+            }
+            return nil
+        },
     },
 }))
 ```
@@ -193,15 +246,17 @@ Subject 由生成者自己决定，上层的 CN 白名单也提供不了保护�
 
 ```go
 // 按顺序尝试多种认证方式：mTLS > HMAC > API Key
-app.Use(middleware.CombinedAuth(middleware.AuthConfig{
-    MTLSConfig: &middleware.MTLSConfig{
-        RequireCert: false, // 可选 mTLS
-    },
-    HMACConfig: &middleware.HMACConfig{
-        Secret: "hmac-secret",
-    },
-    APIKeyConfig: &middleware.APIKeyConfig{
-        APIKey: "api-key",
+app.Use(fiberadapter.CombinedAuth(fiberadapter.AuthConfig{
+    AuthConfig: middleware.AuthConfig{
+        MTLSConfig: &middleware.MTLSConfig{
+            RequireCert: false, // 可选 mTLS
+        },
+        HMACConfig: &middleware.HMACConfig{
+            Secret: "hmac-secret",
+        },
+        APIKeyConfig: &middleware.APIKeyConfig{
+            APIKey: "api-key",
+        },
     },
 }))
 ```
@@ -221,19 +276,23 @@ limiter := middleware.NewRateLimiter(middleware.RateLimiterConfig{
 defer limiter.Stop()
 
 // 添加中间件
-app.Use(middleware.RateLimit(middleware.RateLimitConfig{
-    Limiter:   limiter,
-    SkipPaths: []string{"/health", "/metrics"},
+app.Use(fiberadapter.RateLimit(fiberadapter.RateLimitConfig{
+    RateLimitConfig: middleware.RateLimitConfig{
+        Limiter:   limiter,
+        SkipPaths: []string{"/health", "/metrics"},
+    },
 }))
 
 // IP 白名单
 limiter.AddToWhitelist("10.0.0.1")
 
 // 自定义 Key 函数（例如按用户 ID 限流）
-app.Use(middleware.RateLimit(middleware.RateLimitConfig{
-    Limiter: limiter,
-    KeyFunc: func(c fiber.Ctx) string {
-        return c.Get("X-User-ID")
+app.Use(fiberadapter.RateLimit(fiberadapter.RateLimitConfig{
+    RateLimitConfig: middleware.RateLimitConfig{
+        Limiter: limiter,
+        KeyFunc: func(c fiber.Ctx) string {
+            return c.Get("X-User-ID")
+        },
     },
 }))
 ```
@@ -245,13 +304,13 @@ app.Use(middleware.RateLimit(middleware.RateLimitConfig{
 
 ```go
 // 默认安全头
-app.Use(middleware.SecurityHeaders(middleware.DefaultSecurityHeadersConfig()))
+app.Use(fiberadapter.SecurityHeaders(middleware.DefaultSecurityHeadersConfig()))
 
 // 严格安全头（推荐生产环境使用）
-app.Use(middleware.SecurityHeaders(middleware.StrictSecurityHeadersConfig()))
+app.Use(fiberadapter.SecurityHeaders(middleware.StrictSecurityHeadersConfig()))
 
 // 自定义配置
-app.Use(middleware.SecurityHeaders(middleware.SecurityHeadersConfig{
+app.Use(fiberadapter.SecurityHeaders(middleware.SecurityHeadersConfig{
     XContentTypeOptions:     "nosniff",
     XFrameOptions:           "DENY",
     ContentSecurityPolicy:   "default-src 'self'",
@@ -259,16 +318,18 @@ app.Use(middleware.SecurityHeaders(middleware.SecurityHeadersConfig{
 }))
 
 // 敏感端点禁止缓存
-app.Use("/api/sensitive", middleware.NoCacheHeaders())
+app.Use("/api/sensitive", fiberadapter.NoCacheHeaders())
 ```
 
 ### 请求体限制
 
 ```go
-app.Use(middleware.BodyLimit(middleware.BodyLimitConfig{
-    MaxSize:     4 * 1024 * 1024, // 4MB
-    SkipMethods: []string{"GET", "HEAD"},
-    SkipPaths:   []string{"/upload"}, // 允许大文件上传
+app.Use(fiberadapter.BodyLimit(fiberadapter.BodyLimitConfig{
+    BodyLimitConfig: middleware.BodyLimitConfig{
+        MaxSize:     4 * 1024 * 1024, // 4MB
+        SkipMethods: []string{"GET", "HEAD"},
+        SkipPaths:   []string{"/upload"}, // 允许大文件上传
+    },
 }))
 ```
 
@@ -292,14 +353,16 @@ import "github.com/rs/zerolog"
 
 logger := zerolog.New(os.Stdout)
 
-app.Use(middleware.RequestLogging(middleware.LoggingConfig{
-    Logger:     &logger,
-    SkipPaths:  []string{"/health", "/metrics"},
-    LogHeaders: true,
-    SensitiveHeaders: []string{
-        "Authorization",
-        "X-API-Key",
-        "Cookie",
+app.Use(fiberadapter.RequestLogging(fiberadapter.LoggingConfig{
+    LoggingConfig: middleware.LoggingConfig{
+        Logger:     &logger,
+        SkipPaths:  []string{"/health", "/metrics"},
+        LogHeaders: true,
+        SensitiveHeaders: []string{
+            "Authorization",
+            "X-API-Key",
+            "Cookie",
+        },
     },
 }))
 ```
@@ -315,7 +378,7 @@ trustedProxies := middleware.NewTrustedProxyConfig([]string{
 
 // Fiber 处理器中
 app.Get("/", func(c fiber.Ctx) error {
-    clientIP := middleware.GetClientIPFiber(c, trustedProxies)
+    clientIP := fiberadapter.GetClientIPFiber(c, trustedProxies)
     return c.SendString("Your IP: " + clientIP)
 })
 

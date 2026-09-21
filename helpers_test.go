@@ -2,12 +2,11 @@ package middleware
 
 import (
 	"bytes"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"net/http"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestParseTimestamp(t *testing.T) {
@@ -26,7 +25,7 @@ func TestParseTimestamp(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := parseTimestamp(tt.input)
+			result, err := ParseTimestamp(tt.input)
 			if tt.expectErr {
 				assert.Error(t, err)
 			} else {
@@ -39,42 +38,42 @@ func TestParseTimestamp(t *testing.T) {
 
 func TestIsTimestampValid(t *testing.T) {
 	t.Run("within drift", func(t *testing.T) {
-		result := isTimestampValid(0, 10) // 0 is way in the past
+		result := IsTimestampValid(0, 10) // 0 is way in the past
 		assert.False(t, result)
 	})
 
 	t.Run("at drift boundary", func(t *testing.T) {
-		result := isTimestampValid(0, 1000000000000)
+		result := IsTimestampValid(0, 1000000000000)
 		assert.True(t, result)
 	})
 
 	t.Run("current timestamp valid", func(t *testing.T) {
 		now := time.Now().Unix()
-		result := isTimestampValid(now, 60)
+		result := IsTimestampValid(now, 60)
 		assert.True(t, result)
 	})
 
 	t.Run("future timestamp within drift", func(t *testing.T) {
 		future := time.Now().Unix() + 30 // 30 seconds in future
-		result := isTimestampValid(future, 60)
+		result := IsTimestampValid(future, 60)
 		assert.True(t, result)
 	})
 
 	t.Run("future timestamp outside drift", func(t *testing.T) {
 		future := time.Now().Unix() + 120 // 2 minutes in future
-		result := isTimestampValid(future, 60)
+		result := IsTimestampValid(future, 60)
 		assert.False(t, result)
 	})
 
 	t.Run("past timestamp within drift", func(t *testing.T) {
 		past := time.Now().Unix() - 30 // 30 seconds ago
-		result := isTimestampValid(past, 60)
+		result := IsTimestampValid(past, 60)
 		assert.True(t, result)
 	})
 
 	t.Run("past timestamp outside drift", func(t *testing.T) {
 		past := time.Now().Unix() - 120 // 2 minutes ago
-		result := isTimestampValid(past, 60)
+		result := IsTimestampValid(past, 60)
 		assert.False(t, result)
 	})
 }
@@ -86,16 +85,16 @@ func TestConstantTimeEqual(t *testing.T) {
 		b        string
 		expected bool
 	}{
-		{"equal strings", "hello", "hello", true},
-		{"different strings", "hello", "world", false},
+		{"equal Strings", "hello", "hello", true},
+		{"different Strings", "hello", "world", false},
 		{"different lengths", "hello", "hello!", false},
-		{"empty strings", "", "", true},
+		{"empty Strings", "", "", true},
 		{"one empty", "hello", "", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := constantTimeEqual(tt.a, tt.b)
+			result := ConstantTimeEqual(tt.a, tt.b)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

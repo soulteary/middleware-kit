@@ -2,13 +2,14 @@ package middleware
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/gofiber/fiber/v3"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
@@ -42,211 +43,6 @@ func TestComputeHMAC(t *testing.T) {
 
 	sig4 := ComputeHMAC(timestamp, service, body, "different-secret")
 	assert.NotEqual(t, sig1, sig4)
-}
-
-func TestHMACAuth_Fiber(t *testing.T) {
-	secret := "test-secret"
-
-	t.Run("valid HMAC signature", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: secret,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		body := `{"test": "data"}`
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-		service := "test-service"
-		signature := ComputeHMAC(timestamp, service, body, secret)
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", service)
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-	})
-
-	t.Run("invalid signature", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: secret,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		body := `{"test": "data"}`
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Signature", "invalid-signature")
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("missing signature", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: secret,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("missing timestamp", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: secret,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("expired timestamp", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret:       secret,
-			MaxTimeDrift: 5 * time.Minute,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		body := `{"test": "data"}`
-		// Use timestamp 10 minutes ago
-		timestamp := strconv.FormatInt(time.Now().Unix()-600, 10)
-		signature := ComputeHMAC(timestamp, "test-service", body, secret)
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("invalid timestamp format", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: secret,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-		req.Header.Set("X-Timestamp", "not-a-number")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("key provider with valid key ID", func(t *testing.T) {
-		keys := map[string]string{
-			"key1": "secret1",
-			"key2": "secret2",
-		}
-
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			KeyProvider: func(keyID string) string {
-				return keys[keyID]
-			},
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		body := `{"test": "data"}`
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-		signature := ComputeHMAC(timestamp, "test-service", body, "secret1")
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-		req.Header.Set("X-Key-Id", "key1")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-	})
-
-	t.Run("key provider with invalid key ID", func(t *testing.T) {
-		keys := map[string]string{
-			"key1": "secret1",
-		}
-
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			KeyProvider: func(keyID string) string {
-				return keys[keyID]
-			},
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-		req.Header.Set("X-Key-Id", "unknown-key")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("allow empty secret", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret:           "",
-			AllowEmptySecret: true,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-	})
 }
 
 func TestHMACAuthStd(t *testing.T) {
@@ -571,228 +367,156 @@ func TestHMACAuthStd(t *testing.T) {
 	})
 }
 
-func TestHMACAuth_FiberWithLogger(t *testing.T) {
-	t.Run("success with logger", func(t *testing.T) {
+// errBody is a request body that fails on read, the shape readBody returns an
+// error for.
+type errBody struct{}
+
+func (errBody) Read([]byte) (int, error) { return 0, errors.New("broken pipe") }
+func (errBody) Close() error             { return nil }
+
+// TestHMACAuthStd_UncoveredBranches covers four branches of the net/http half
+// that had no test: a future timestamp, an unreadable body, the reserved
+// character check on the service header, and the replay rejection. The Fiber
+// half's equivalents are all covered, so a divergence in any of them would have
+// gone unnoticed on this side.
+func TestHMACAuthStd_UncoveredBranches(t *testing.T) {
+	const secret = "test-secret"
+
+	serve := func(cfg HMACConfig, req *http.Request) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		HMACAuthStd(cfg)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+		return rec
+	}
+
+	signedReq := func(ts, service, body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
+		req.Header.Set("X-Signature", ComputeHMAC(ts, service, body, secret))
+		req.Header.Set("X-Timestamp", ts)
+		req.Header.Set("X-Service", service)
+		return req
+	}
+
+	t.Run("a timestamp far in the future is expired too", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := zerolog.New(&buf)
 
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: "test-secret",
-			Logger: &logger,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
+		future := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+		rec := serve(HMACConfig{Secret: secret, MaxTimeDrift: time.Minute, Logger: &logger},
+			signedReq(future, "svc", "{}"))
 
-		body := `{"test": "data"}`
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-		signature := ComputeHMAC(timestamp, "test-service", body, "test-secret")
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(body))
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Contains(t, buf.String(), "HMAC authentication successful")
-	})
-
-	t.Run("invalid signature with logger", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := zerolog.New(&buf)
-
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret:             "test-secret",
-			Logger:             &logger,
-			TrustedProxyConfig: DefaultTrustedProxyConfig(),
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(`{"test": "data"}`))
-		req.Header.Set("X-Signature", "invalid")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-		assert.Contains(t, buf.String(), "HMAC authentication failed")
-	})
-
-	t.Run("allow empty secret with logger", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := zerolog.New(&buf)
-
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret:           "",
-			AllowEmptySecret: true,
-			Logger:           &logger,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Contains(t, buf.String(), "HMAC authentication disabled")
-	})
-
-	t.Run("custom error handler", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: "test-secret",
-			ErrorHandler: func(c fiber.Ctx, err error) error {
-				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "custom"})
-			},
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "invalid")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
-	})
-
-	t.Run("success handler called", func(t *testing.T) {
-		successCalled := false
-
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: "test-secret",
-			SuccessHandler: func(c fiber.Ctx) {
-				successCalled = true
-			},
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		body := `{"test": "data"}`
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-		signature := ComputeHMAC(timestamp, "test-service", body, "test-secret")
-
-		req := httptest.NewRequest("POST", "/", bytes.NewBufferString(body))
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.True(t, successCalled)
-	})
-
-	t.Run("reject when no secret and AllowEmptySecret is false", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret:           "",
-			AllowEmptySecret: false,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
-	})
-
-	t.Run("expired timestamp with logger", func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := zerolog.New(&buf)
-
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret:       "test-secret",
-			MaxTimeDrift: 60 * time.Second,
-			Logger:       &logger,
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		// 10 minutes ago
-		timestamp := strconv.FormatInt(time.Now().Unix()-600, 10)
-		signature := ComputeHMAC(timestamp, "test-service", "", "test-secret")
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 		assert.Contains(t, buf.String(), "timestamp expired")
 	})
 
-	t.Run("success with SuccessHandler", func(t *testing.T) {
-		successCalled := false
+	t.Run("an unreadable body is a bad request", func(t *testing.T) {
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		req := httptest.NewRequest(http.MethodPost, "/x", nil)
+		req.Body = errBody{}
+		req.Header.Set("X-Signature", "whatever")
+		req.Header.Set("X-Timestamp", ts)
 
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			Secret: "test-secret",
-			SuccessHandler: func(c fiber.Ctx) {
-				successCalled = true
-			},
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-		signature := ComputeHMAC(timestamp, "test-service", "", "test-secret")
-
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", signature)
-		req.Header.Set("X-Timestamp", timestamp)
-		req.Header.Set("X-Service", "test-service")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.True(t, successCalled)
+		rec := serve(HMACConfig{Secret: secret}, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
-	t.Run("KeyProvider returns empty secret for valid keyID", func(t *testing.T) {
-		app := fiber.New()
-		app.Use(HMACAuth(HMACConfig{
-			KeyProvider: func(keyID string) string {
-				return "" // Always return empty
-			},
-		}))
-		app.Post("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
+	t.Run("a service carrying the legacy delimiter is rejected and logged", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
 
-		req := httptest.NewRequest("POST", "/", nil)
-		req.Header.Set("X-Signature", "some-signature")
-		req.Header.Set("X-Timestamp", strconv.FormatInt(time.Now().Unix(), 10))
-		req.Header.Set("X-Key-Id", "valid-key")
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		rec := serve(HMACConfig{Secret: secret, Logger: &logger}, signedReq(ts, "svc:extra", "{}"))
 
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, buf.String(), "service contains a reserved character")
 	})
+
+	t.Run("a replayed signature is rejected and logged", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := zerolog.New(&buf)
+
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		cfg := HMACConfig{Secret: secret, Logger: &logger, ReplayGuard: NewMemoryReplayGuard()}
+
+		assert.Equal(t, http.StatusOK, serve(cfg, signedReq(ts, "svc", "{}")).Code)
+
+		rec := serve(cfg, signedReq(ts, "svc", "{}"))
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+		assert.Contains(t, buf.String(), "signature replayed")
+	})
+}
+
+// TestExpectedSignature_LegacySignatureFunc covers the SignatureFunc branch of
+// ExpectedSignature from the net/http side.
+//
+// It is reachable from both halves, but only a Fiber test exercised it; per-
+// package coverage does not credit the root package for a call made from
+// fiberadapter's tests, so moving the Fiber half out left this branch with no
+// coverage attributed to the package that owns it.
+func TestExpectedSignature_LegacySignatureFunc(t *testing.T) {
+	const secret = "test-secret"
+
+	custom := func(timestamp, service, body, sec string) string {
+		return "sig-" + timestamp + "-" + service + "-" + body + "-" + sec
+	}
+
+	t.Run("the method dispatches to SignatureFunc", func(t *testing.T) {
+		cfg := HMACConfig{SignatureFunc: custom}
+		got := cfg.ExpectedSignature(SignatureInput{
+			Method: http.MethodPost, Path: "/x", RawQuery: "a=1",
+			Timestamp: "123", Service: "svc", Body: "{}", Secret: secret,
+		})
+		assert.Equal(t, custom("123", "svc", "{}", secret), got,
+			"SignatureFunc receives only timestamp, service, body and secret")
+	})
+
+	t.Run("RequestSignatureFunc takes precedence", func(t *testing.T) {
+		cfg := HMACConfig{
+			SignatureFunc:        custom,
+			RequestSignatureFunc: func(SignatureInput) string { return "bound" },
+		}
+		assert.Equal(t, "bound", cfg.ExpectedSignature(SignatureInput{Timestamp: "123"}))
+	})
+
+	t.Run("HMACAuthStd authenticates a request signed with SignatureFunc", func(t *testing.T) {
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		body := "{}"
+
+		req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
+		req.Header.Set("X-Signature", custom(ts, "svc", body, secret))
+		req.Header.Set("X-Timestamp", ts)
+		req.Header.Set("X-Service", "svc")
+
+		rec := httptest.NewRecorder()
+		HMACAuthStd(HMACConfig{
+			Secret:        secret,
+			SignatureFunc: custom,
+			// The legacy signer is ambiguous, so ':' in the service header
+			// stays refused unless this is set -- see ServiceAllowed.
+			AllowDelimitersInService: false,
+		})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+// TestMemoryReplayGuard_SweepDropsExpiredEntries covers the delete inside the
+// amortized sweep.
+func TestMemoryReplayGuard_SweepDropsExpiredEntries(t *testing.T) {
+	// nextSweep is left at its zero value, so the first call sweeps.
+	g := &MemoryReplayGuard{seen: map[string]time.Time{
+		"stale": time.Now().Add(-time.Minute),
+		"live":  time.Now().Add(time.Hour),
+	}}
+
+	assert.False(t, g.Seen("fresh", time.Minute))
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	assert.NotContains(t, g.seen, "stale", "an expired entry is dropped by the sweep")
+	assert.Contains(t, g.seen, "live")
+	assert.Contains(t, g.seen, "fresh")
 }

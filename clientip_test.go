@@ -1,12 +1,10 @@
 package middleware
 
 import (
+	"github.com/stretchr/testify/assert"
 	"net"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/gofiber/fiber/v3"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestIsPrivateIP(t *testing.T) {
@@ -168,172 +166,6 @@ func TestGetClientIP_Standard(t *testing.T) {
 	})
 }
 
-func TestGetClientIPFiber(t *testing.T) {
-	t.Run("returns IP from context", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, nil)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		// Should return some IP (even if it's 0.0.0.0 in test)
-		assert.NotEmpty(t, capturedIP)
-	})
-
-	t.Run("X-Real-IP from trusted proxy", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		// Use trust all proxies for testing
-		cfg := &TrustedProxyConfig{TrustAllProxies: true}
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, cfg)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("X-Real-IP", "203.0.113.1")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Equal(t, "203.0.113.1", capturedIP)
-	})
-
-	t.Run("X-Forwarded-For from trusted proxy", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		cfg := &TrustedProxyConfig{TrustAllProxies: true}
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, cfg)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("X-Forwarded-For", "203.0.113.2, 10.0.0.1, 10.0.0.2")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Equal(t, "203.0.113.2", capturedIP)
-	})
-
-	t.Run("X-Forwarded-For chain preferred over X-Real-IP", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		cfg := &TrustedProxyConfig{TrustAllProxies: true}
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, cfg)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("X-Real-IP", "203.0.113.1")
-		req.Header.Set("X-Forwarded-For", "203.0.113.2")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.Equal(t, "203.0.113.2", capturedIP)
-	})
-
-	t.Run("with nil config uses default", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, nil)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.NotEmpty(t, capturedIP)
-	})
-
-	t.Run("invalid X-Real-IP header ignored", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		cfg := &TrustedProxyConfig{TrustAllProxies: true}
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, cfg)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("X-Real-IP", "not-an-ip")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		// Should fall back to connection IP
-		assert.NotEmpty(t, capturedIP)
-	})
-
-	t.Run("invalid X-Forwarded-For header ignored", func(t *testing.T) {
-		app := fiber.New()
-		var capturedIP string
-
-		cfg := &TrustedProxyConfig{TrustAllProxies: true}
-
-		app.Use(func(c fiber.Ctx) error {
-			capturedIP = GetClientIPFiber(c, cfg)
-			return c.Next()
-		})
-
-		app.Get("/", func(c fiber.Ctx) error {
-			return c.SendString("OK")
-		})
-
-		req := httptest.NewRequest("GET", "/", nil)
-		req.Header.Set("X-Forwarded-For", "invalid-ip, also-invalid")
-
-		resp, err := app.Test(req)
-		assert.NoError(t, err)
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode)
-		assert.NotEmpty(t, capturedIP)
-	})
-}
-
 func TestGetRemoteIP(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -408,4 +240,15 @@ func TestIsPrivateIP_LinkLocal(t *testing.T) {
 	t.Run("nil IP is not private", func(t *testing.T) {
 		assert.False(t, IsPrivateIP(nil))
 	})
+}
+
+// TestIsPrivateIP_IPv6UniqueLocal covers the ip.IsPrivate() arm, which the
+// hard-coded IPv4 ranges above reach before it. fc00::/7 is the IPv6 equivalent
+// of the private IPv4 blocks: without it an all-IPv6 deployment's proxies are
+// never trusted.
+func TestIsPrivateIP_IPv6UniqueLocal(t *testing.T) {
+	for _, s := range []string{"fc00::1", "fd12:3456::1"} {
+		assert.True(t, IsPrivateIP(net.ParseIP(s)), "%s is a unique local address", s)
+	}
+	assert.False(t, IsPrivateIP(net.ParseIP("2001:db8::1")), "a documentation address is not private")
 }

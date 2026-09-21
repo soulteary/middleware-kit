@@ -67,11 +67,11 @@ func ComputeHMACBound(in SignatureInput) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// expectedSignature picks the signature function configured on cfg.
+// ExpectedSignature picks the signature function configured on cfg.
 //
 // RequestSignatureFunc wins when set; otherwise the legacy SignatureFunc (or
 // ComputeHMAC) is used with only timestamp, service and body.
-func (cfg HMACConfig) expectedSignature(in SignatureInput) string {
+func (cfg HMACConfig) ExpectedSignature(in SignatureInput) string {
 	if cfg.RequestSignatureFunc != nil {
 		return cfg.RequestSignatureFunc(in)
 	}
@@ -93,7 +93,7 @@ func validService(service string) bool {
 	return !strings.Contains(service, ":")
 }
 
-// serviceAllowed reports whether service may be used with cfg's signature
+// ServiceAllowed reports whether service may be used with cfg's signature
 // function.
 //
 // The guard is ON unless the configuration positively establishes that the
@@ -108,7 +108,7 @@ func validService(service string) bool {
 // false for any wrapper around it, or for a custom RequestSignatureFunc that
 // concatenates its fields. Each of those turned the guard off while signing
 // exactly the ambiguous bytes it exists to defend.
-func (cfg HMACConfig) serviceAllowed(service string) bool {
+func (cfg HMACConfig) ServiceAllowed(service string) bool {
 	if cfg.AllowDelimitersInService || cfg.usesBoundEncoding() {
 		return true
 	}
@@ -131,7 +131,7 @@ func (cfg HMACConfig) usesBoundEncoding() bool {
 		reflect.ValueOf(ComputeHMACBound).Pointer()
 }
 
-// replayRetention is how long a ReplayGuard must remember a signature.
+// ReplayRetention is how long a ReplayGuard must remember a signature.
 //
 // It has to cover the whole span over which one timestamp stays acceptable.
 // Timestamps are validated as integer seconds, inclusively, against
@@ -144,7 +144,7 @@ func (cfg HMACConfig) usesBoundEncoding() bool {
 // again as soon as the first retention elapsed; retaining for exactly two
 // left the final fractional second of validity uncovered -- with the 5 minute
 // default, a 0.9s window in which the same request replayed successfully.
-func replayRetention(maxDrift time.Duration) time.Duration {
+func ReplayRetention(maxDrift time.Duration) time.Duration {
 	if maxDrift <= 0 {
 		return 0
 	}
@@ -199,7 +199,7 @@ func NewMemoryReplayGuard() *MemoryReplayGuard {
 
 // Seen records id and reports whether it had been seen before.
 //
-// ttl is the full retention the caller asks for -- see replayRetention, which
+// ttl is the full retention the caller asks for -- see ReplayRetention, which
 // doubles MaxTimeDrift to cover a signature's whole validity period rather
 // than just the drift. It applies to THIS id only.
 func (g *MemoryReplayGuard) Seen(id string, ttl time.Duration) bool {
