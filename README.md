@@ -626,6 +626,17 @@ go tool cover -html=coverage.out -o coverage.html
 go tool cover -func=coverage.out
 ```
 
+## Changelog
+
+Release history and upgrade notes: [CHANGELOG.md](CHANGELOG.md).
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md) — please report
+privately rather than in a public issue. That file also records a
+client-certificate check that does not execute in v2.0.0–v2.2.0 and is fixed in
+v3.0.0.
+
 ## Contributing
 
 1. Fork the repository

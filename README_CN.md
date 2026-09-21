@@ -587,6 +587,15 @@ go tool cover -html=coverage.out -o coverage.html
 go tool cover -func=coverage.out
 ```
 
+## 变更日志
+
+版本历史与升级说明见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 安全
+
+报告漏洞请见 [SECURITY.md](SECURITY.md) —— 请私下报告，不要开公开 issue。
+该文件同时记录了 v2.0.0–v2.2.0 中一个不会执行的客户端证书校验，该问题已在 v3.0.0 修复。
+
 ## 贡献
 
 1. Fork 此仓库
