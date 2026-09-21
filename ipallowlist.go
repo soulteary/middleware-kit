@@ -1,5 +1,3 @@
-// Package middleware provides IP allowlist middleware for net/http.
-// Only requests whose client IP is in the allowlist are permitted; others receive 403 Forbidden.
 package middleware
 
 import (
