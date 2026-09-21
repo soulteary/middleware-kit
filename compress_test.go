@@ -2,13 +2,12 @@ package middleware
 
 import (
 	"compress/gzip"
+	"github.com/stretchr/testify/assert"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestCompressStd(t *testing.T) {

@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-
-	"github.com/gofiber/fiber/v3"
 )
 
 // TrustedProxyConfig configures trusted proxy settings for client IP detection.
@@ -159,7 +157,7 @@ func IsPrivateIP(ip net.IP) bool {
 	return false
 }
 
-// clientIPFromForwarded resolves the client address from a forwarded chain,
+// ClientIPFromForwarded resolves the client address from a forwarded chain,
 // assuming the direct peer has already been established as a trusted proxy.
 //
 // The chain is walked from the RIGHT: every well-behaved hop appends the
@@ -172,7 +170,7 @@ func IsPrivateIP(ip net.IP) bool {
 // real address to the right of it; the forged value is still first. That made
 // every control keyed on this function (IP allow-list, per-IP rate limiting,
 // audit logs) trivially bypassable even behind a correctly configured proxy.
-func (c *TrustedProxyConfig) clientIPFromForwarded(forwarded, realIP string, peer net.IP) string {
+func (c *TrustedProxyConfig) ClientIPFromForwarded(forwarded, realIP string, peer net.IP) string {
 	if forwarded != "" {
 		parts := strings.Split(forwarded, ",")
 		chainBroken := false
@@ -235,9 +233,9 @@ func GetClientIP(r *http.Request, trustedConfig *TrustedProxyConfig) string {
 		return remoteIP.String()
 	}
 
-	return trustedConfig.clientIPFromForwarded(
-		joinForwarded(r.Header.Values("X-Forwarded-For")),
-		lastHeaderValue(r.Header.Values("X-Real-IP")),
+	return trustedConfig.ClientIPFromForwarded(
+		JoinForwarded(r.Header.Values("X-Forwarded-For")),
+		LastHeaderValue(r.Header.Values("X-Real-IP")),
 		remoteIP,
 	)
 }
@@ -245,30 +243,7 @@ func GetClientIP(r *http.Request, trustedConfig *TrustedProxyConfig) string {
 // GetClientIPFiber extracts the real client IP address from a Fiber context.
 // It applies the same trusted-proxy and right-to-left chain resolution as
 // GetClientIP.
-func GetClientIPFiber(c fiber.Ctx, trustedConfig *TrustedProxyConfig) string {
-	if trustedConfig == nil {
-		trustedConfig = DefaultTrustedProxyConfig()
-	}
-
-	// Get the direct connection IP
-	remoteIP := net.ParseIP(c.IP())
-	if remoteIP == nil {
-		return c.IP()
-	}
-
-	// If not from trusted proxy, return direct IP
-	if !trustedConfig.IsTrusted(remoteIP) {
-		return remoteIP.String()
-	}
-
-	return trustedConfig.clientIPFromForwarded(
-		joinForwarded(peekAllStrings(c, "X-Forwarded-For")),
-		lastHeaderValue(peekAllStrings(c, "X-Real-IP")),
-		remoteIP,
-	)
-}
-
-// joinForwarded splices every X-Forwarded-For field into one chain, in wire
+// JoinForwarded splices every X-Forwarded-For field into one chain, in wire
 // order.
 //
 // The header may legitimately appear more than once: a proxy that APPENDS its
@@ -279,7 +254,7 @@ func GetClientIPFiber(c fiber.Ctx, trustedConfig *TrustedProxyConfig) string {
 // the right-to-left rule that makes this function spoof-resistant had nothing
 // to work with. Every control keyed on it (allow-lists, per-IP rate limits)
 // was bypassable by sending a single X-Forwarded-For header.
-func joinForwarded(values []string) string {
+func JoinForwarded(values []string) string {
 	out := make([]string, 0, len(values))
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {
@@ -289,13 +264,13 @@ func joinForwarded(values []string) string {
 	return strings.Join(out, ",")
 }
 
-// lastHeaderValue returns the last non-empty value of a single-valued header.
+// LastHeaderValue returns the last non-empty value of a single-valued header.
 //
 // The LAST, for the same reason: a proxy that appends rather than overwrites
 // puts its own value after whatever the client sent, so the final line is the
 // one attributable to the trusted hop. Where the proxy overwrites, there is
 // only one and this is the same value Get would return.
-func lastHeaderValue(values []string) string {
+func LastHeaderValue(values []string) string {
 	for i := len(values) - 1; i >= 0; i-- {
 		if strings.TrimSpace(values[i]) != "" {
 			return values[i]
@@ -306,15 +281,6 @@ func lastHeaderValue(values []string) string {
 
 // peekAllStrings returns every value of a request header from a Fiber context.
 // fasthttp's Peek -- which c.Get uses -- returns only the first.
-func peekAllStrings(c fiber.Ctx, name string) []string {
-	raw := c.RequestCtx().Request.Header.PeekAll(name)
-	out := make([]string, 0, len(raw))
-	for _, v := range raw {
-		out = append(out, string(v))
-	}
-	return out
-}
-
 // getRemoteIP extracts and parses the IP from a remote address string.
 func getRemoteIP(remoteAddr string) net.IP {
 	host, _, err := net.SplitHostPort(remoteAddr)

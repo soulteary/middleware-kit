@@ -9,13 +9,13 @@ import (
 	"time"
 )
 
-// parseTimestamp parses a Unix timestamp string.
-func parseTimestamp(timestamp string) (int64, error) {
+// ParseTimestamp parses a Unix timestamp string.
+func ParseTimestamp(timestamp string) (int64, error) {
 	return strconv.ParseInt(timestamp, 10, 64)
 }
 
-// isTimestampValid checks if a timestamp is within the allowed drift.
-func isTimestampValid(timestamp, maxDriftSeconds int64) bool {
+// IsTimestampValid checks if a timestamp is within the allowed drift.
+func IsTimestampValid(timestamp, maxDriftSeconds int64) bool {
 	now := time.Now().Unix()
 	drift := now - timestamp
 	if drift < 0 {
@@ -24,15 +24,15 @@ func isTimestampValid(timestamp, maxDriftSeconds int64) bool {
 	return drift <= maxDriftSeconds
 }
 
-// constantTimeEqual compares two strings in constant time to prevent timing attacks.
-// constantTimeEqual compares two strings without leaking how much of them
+// ConstantTimeEqual compares two Strings in constant time to prevent timing attacks.
+// ConstantTimeEqual compares two Strings without leaking how much of them
 // matched, or how long the expected value is.
 //
 // subtle.ConstantTimeCompare returns early when the lengths differ, so calling
 // it directly on a secret and an attacker-supplied value leaks the secret's
 // length through timing. Both inputs are padded to the same size first, and
 // the length check is folded into the result.
-func constantTimeEqual(a, b string) bool {
+func ConstantTimeEqual(a, b string) bool {
 	n := len(a)
 	if len(b) > n {
 		n = len(b)

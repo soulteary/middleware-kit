@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gofiber/fiber/v3"
 )
 
 func certWithCN(cn string) *x509.Certificate {
@@ -54,7 +52,7 @@ func TestVerifiedPeerCertificateRequiresVerifiedChain(t *testing.T) {
 // certificate, so AllowedCNs was dead configuration.
 func TestCombinedAuthAppliesMTLSRestrictions(t *testing.T) {
 	cfg := MTLSConfig{RequireCert: true, AllowedCNs: []string{"svc-a"}}
-	lists := newCertAllowLists(cfg)
+	lists := NewCertAllowLists(cfg)
 
 	allowed := certWithCN("svc-a")
 	denied := certWithCN("attacker")
@@ -66,15 +64,15 @@ func TestCombinedAuthAppliesMTLSRestrictions(t *testing.T) {
 		}
 	}
 
-	if _, err := authenticateMTLS(state(allowed), cfg, lists); err != nil {
+	if _, err := AuthenticateMTLS(state(allowed), cfg, lists); err != nil {
 		t.Errorf("allowed CN rejected: %v", err)
 	}
-	if _, err := authenticateMTLS(state(denied), cfg, lists); !errors.Is(err, ErrMTLSCertificateInvalid) {
+	if _, err := AuthenticateMTLS(state(denied), cfg, lists); !errors.Is(err, ErrMTLSCertificateInvalid) {
 		t.Errorf("CN outside the allow-list: got %v, want ErrMTLSCertificateInvalid", err)
 	}
 	// Verified chain absent: rejected even though the CN is allowed.
 	selfSigned := &tls.ConnectionState{PeerCertificates: []*x509.Certificate{allowed}}
-	if _, err := authenticateMTLS(selfSigned, cfg, lists); !errors.Is(err, ErrMTLSCertificateUnverified) {
+	if _, err := AuthenticateMTLS(selfSigned, cfg, lists); !errors.Is(err, ErrMTLSCertificateUnverified) {
 		t.Errorf("unverified chain with an allowed CN: got %v, want ErrMTLSCertificateUnverified", err)
 	}
 }
@@ -184,7 +182,7 @@ func TestMemoryReplayGuard(t *testing.T) {
 }
 
 // TestConstantTimeEqualDoesNotShortCircuitOnLength documents why
-// constantTimeEqual pads instead of calling subtle.ConstantTimeCompare
+// ConstantTimeEqual pads instead of calling subtle.ConstantTimeCompare
 // directly, and checks the comparison itself is still correct.
 func TestConstantTimeEqualDoesNotShortCircuitOnLength(t *testing.T) {
 	cases := []struct {
@@ -199,8 +197,8 @@ func TestConstantTimeEqualDoesNotShortCircuitOnLength(t *testing.T) {
 		{"", "x", false},
 	}
 	for _, c := range cases {
-		if got := constantTimeEqual(c.a, c.b); got != c.want {
-			t.Errorf("constantTimeEqual(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		if got := ConstantTimeEqual(c.a, c.b); got != c.want {
+			t.Errorf("ConstantTimeEqual(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
 	}
 }
@@ -288,11 +286,11 @@ func TestBoundSignatureCoversTheEscapedPath(t *testing.T) {
 // validation adds -- is asserted by
 // TestReplayRetentionCoversTheFinalSecondOfValidity.
 func TestReplayRetentionCoversTheWholeValidityWindow(t *testing.T) {
-	if got, want := replayRetention(5*time.Minute), 10*time.Minute; got < want {
-		t.Errorf("replayRetention(5m) = %s, want at least %s (two drifts of validity)", got, want)
+	if got, want := ReplayRetention(5*time.Minute), 10*time.Minute; got < want {
+		t.Errorf("ReplayRetention(5m) = %s, want at least %s (two drifts of validity)", got, want)
 	}
-	if got := replayRetention(0); got != 0 {
-		t.Errorf("replayRetention(0) = %s, want 0", got)
+	if got := ReplayRetention(0); got != 0 {
+		t.Errorf("ReplayRetention(0) = %s, want 0", got)
 	}
 
 	g := NewMemoryReplayGuard()
@@ -309,51 +307,6 @@ func TestReplayRetentionCoversTheWholeValidityWindow(t *testing.T) {
 // locally computed default. With the documented zero value the guard received
 // 0, expired the entry on the very next request, and enabling ReplayGuard
 // prevented no replay at all.
-func TestCombinedAuthPassesTheNormalizedDrift(t *testing.T) {
-	var gotTTL time.Duration
-	guard := recordingGuard{onSeen: func(ttl time.Duration) { gotTTL = ttl }}
-
-	cfg := HMACConfig{
-		Secret:      "s3cr3t",
-		ReplayGuard: &guard,
-		// MaxTimeDrift deliberately left at its documented zero value.
-	}
-
-	app := fiber.New()
-	app.Post("/x", func(c fiber.Ctx) error {
-		if !validateHMAC(c, cfg) {
-			return c.SendStatus(http.StatusUnauthorized)
-		}
-		return c.SendStatus(http.StatusOK)
-	})
-
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	body := "{}"
-	sig := ComputeHMAC(ts, "svc", body, "s3cr3t")
-
-	req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(body))
-	req.Header.Set("X-Timestamp", ts)
-	req.Header.Set("X-Service", "svc")
-	req.Header.Set("X-Signature", sig)
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-
-	if gotTTL <= 0 {
-		t.Errorf("ReplayGuard.Seen got ttl %s with a zero MaxTimeDrift; the entry expires immediately and no replay is prevented", gotTTL)
-	}
-}
-
-// recordingGuard reports the ttl it was handed.
-type recordingGuard struct {
-	onSeen func(time.Duration)
-	seen   map[string]bool
-}
-
 func (g *recordingGuard) Seen(id string, ttl time.Duration) bool {
 	if g.onSeen != nil {
 		g.onSeen(ttl)
@@ -372,12 +325,12 @@ func (g *recordingGuard) Seen(id string, ttl time.Duration) bool {
 // establishes that the signer is unambiguous -- never by inferring it from a
 // function being non-nil, which is true of ComputeHMAC itself.
 func TestServicePolicyIsOnUnlessTheSignerIsKnownSafe(t *testing.T) {
-	allowed := func(cfg HMACConfig) bool { return cfg.serviceAllowed("a:b") }
+	allowed := func(cfg HMACConfig) bool { return cfg.ServiceAllowed("a:b") }
 
 	if allowed(HMACConfig{Secret: "s"}) {
 		t.Error("the default signer accepted a service containing ':'")
 	}
-	if !(HMACConfig{Secret: "s"}).serviceAllowed("plain") {
+	if !(HMACConfig{Secret: "s"}).ServiceAllowed("plain") {
 		t.Error("the default signer rejected an ordinary service name")
 	}
 
@@ -418,12 +371,12 @@ func TestServicePolicyIsOnUnlessTheSignerIsKnownSafe(t *testing.T) {
 func TestReplayRetentionCoversTheFinalSecondOfValidity(t *testing.T) {
 	const drift = 5 * time.Minute
 
-	// Derived from isTimestampValid rather than restated: it accepts while
+	// Derived from IsTimestampValid rather than restated: it accepts while
 	// |floor(now) - ts| <= drift, so ts is first acceptable at ts-drift and
 	// stays acceptable until floor(now) ticks to ts+drift+1.
 	span := (drift + time.Second) - (-drift)
 
-	if got := replayRetention(drift); got < span {
+	if got := ReplayRetention(drift); got < span {
 		t.Errorf("retention %s over a %s validity window; the last %s is replayable", got, span, span-got)
 	}
 }
@@ -432,45 +385,6 @@ func TestReplayRetentionCoversTheFinalSecondOfValidity(t *testing.T) {
 // recording the nonce first. A request carrying a valid signature header but an
 // altered body is rejected anyway -- and used to consume that signature, so the
 // legitimate request that followed was refused as a replay.
-func TestFiberReplayGuardRunsAfterTheSignatureCheck(t *testing.T) {
-	const secret = "s3cr3t"
-	cfg := HMACConfig{Secret: secret, MaxTimeDrift: time.Hour, ReplayGuard: NewMemoryReplayGuard()}
-
-	app := fiber.New()
-	app.Post("/x", HMACAuth(cfg), func(c fiber.Ctx) error { return c.SendStatus(http.StatusOK) })
-
-	ts := strconv.FormatInt(time.Now().Unix(), 10)
-	body := `{"amount":1}`
-	sig := ComputeHMAC(ts, "svc", body, secret)
-
-	send := func(sendBody string) int {
-		req := httptest.NewRequest(http.MethodPost, "/x", strings.NewReader(sendBody))
-		req.Header.Set("X-Timestamp", ts)
-		req.Header.Set("X-Service", "svc")
-		req.Header.Set("X-Signature", sig)
-		resp, err := app.Test(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return resp.StatusCode
-	}
-
-	// Tampered body: rejected, and must NOT consume the signature.
-	if got := send(`{"amount":9999}`); got == http.StatusOK {
-		t.Fatal("a tampered body was accepted")
-	}
-
-	// The legitimate request still goes through.
-	if got := send(body); got != http.StatusOK {
-		t.Errorf("legitimate request = %d, want 200: the tampered attempt consumed its signature", got)
-	}
-
-	// A genuine replay is still refused.
-	if got := send(body); got == http.StatusOK {
-		t.Error("a replayed request was accepted")
-	}
-}
-
 // TestSlidingWindowIsExact is the regression test for the window algorithm.
 //
 // A fixed window admitted almost 2x Rate across a boundary. The weighted
@@ -555,7 +469,7 @@ func TestRateLimiterAllowsASteadyClient(t *testing.T) {
 // TestDefaultSignerKeepsTheColonGuard is the regression test for inferring the
 // encoding AFTER the constructors applied their default. HMACAuth and
 // HMACAuthStd assigned ComputeHMAC to cfg.SignatureFunc before the handler
-// ran, so serviceAllowed saw a non-nil function, called the plain default
+// ran, so ServiceAllowed saw a non-nil function, called the plain default
 // configuration a "custom signer", and let ':' back into the service header --
 // reopening the collision where a signature for service "a" with body "b:c"
 // also authenticates service "a:b" with body "c".
@@ -589,7 +503,7 @@ func TestDefaultSignerKeepsTheColonGuard(t *testing.T) {
 
 	// An explicitly configured unambiguous signer is still allowed to use ':'.
 	bound := HMACConfig{Secret: secret, MaxTimeDrift: time.Hour, RequestSignatureFunc: ComputeHMACBound}
-	if !bound.serviceAllowed("a:b") {
+	if !bound.ServiceAllowed("a:b") {
 		t.Error("the length-prefixed encoding had the legacy service policy imposed on it")
 	}
 	if !bound.usesBoundEncoding() {
@@ -615,30 +529,6 @@ func TestDefaultSignerKeepsTheColonGuard(t *testing.T) {
 // truncated to 0 and the documented zero value accepted only a timestamp
 // landing on the current second, while the replay guard retained entries for
 // 600ns. A request a few seconds old is well inside the documented default.
-func TestCombinedAuthDefaultDriftIsFiveMinutes(t *testing.T) {
-	const secret = "test-secret"
-
-	app := fiber.New()
-	app.Use(CombinedAuth(AuthConfig{
-		// MaxTimeDrift deliberately left at its zero value.
-		HMACConfig: &HMACConfig{Secret: secret},
-	}))
-	app.Post("/", func(c fiber.Ctx) error { return c.SendString("OK") })
-
-	ts := strconv.FormatInt(time.Now().Add(-5*time.Second).Unix(), 10)
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("body"))
-	req.Header.Set("X-Timestamp", ts)
-	req.Header.Set("X-Signature", ComputeHMAC(ts, "", "body", secret))
-
-	resp, err := app.Test(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != fiber.StatusOK {
-		t.Errorf("a 5s-old timestamp got %d with the default drift; the default must be 5 minutes", resp.StatusCode)
-	}
-}
-
 // TestForwardedChainSpansRepeatedHeaders is the regression test for reading
 // X-Forwarded-For with Header.Get.
 //
@@ -803,11 +693,11 @@ func TestAbsentCertificateStillPassesWhenNotRequired(t *testing.T) {
 // share, including the unverified-chain case that must never be waved through.
 func TestCertificateAbsentClassification(t *testing.T) {
 	cert := certWithCN("svc-a")
-	lists := newCertAllowLists(MTLSConfig{})
+	lists := NewCertAllowLists(MTLSConfig{})
 
 	absent := func(state *tls.ConnectionState, cfg MTLSConfig) bool {
-		_, err := authenticateMTLS(state, cfg, lists)
-		return certificateAbsent(err)
+		_, err := AuthenticateMTLS(state, cfg, lists)
+		return CertificateAbsent(err)
 	}
 
 	if !absent(nil, MTLSConfig{}) {
@@ -829,7 +719,7 @@ func TestCertificateAbsentClassification(t *testing.T) {
 		t.Error("validator rejected a verified certificate: want NOT absent")
 	}
 	// The exported sentinel must still reach handleMTLSError's classification.
-	if _, err := authenticateMTLS(nil, MTLSConfig{}, lists); !errors.Is(err, ErrMTLSCertificateMissing) {
+	if _, err := AuthenticateMTLS(nil, MTLSConfig{}, lists); !errors.Is(err, ErrMTLSCertificateMissing) {
 		t.Errorf("nil state: got %v, want it to still wrap ErrMTLSCertificateMissing", err)
 	}
 }

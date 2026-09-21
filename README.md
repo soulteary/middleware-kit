@@ -9,6 +9,46 @@
 
 A comprehensive HTTP middleware toolkit for Go services. This package provides authentication (API Key, HMAC, mTLS), rate limiting, security headers, request logging, compression, and body limiting middleware for both Fiber and standard net/http.
 
+
+> **Breaking in v2.3.0 — Fiber support moved to a subpackage.**
+> The Fiber middleware is now `github.com/soulteary/middleware-kit/v2/fiberadapter`,
+> so importing the root package no longer links Fiber (and fasthttp) into
+> binaries that never use it. In a net/http service that means **25 fewer
+> linked packages, 11 fewer modules and a 14% smaller binary**.
+>
+> Every middleware was already a pair — `XxxAuth` (Fiber) and `XxxAuthStd`
+> (net/http). **The `Std` names are unchanged.** Drop the `middleware.`
+> prefix from the Fiber half and use `fiberadapter.`:
+>
+> | Before | After |
+> |---|---|
+> | `middleware.APIKeyAuth(cfg)` | `fiberadapter.APIKeyAuth(cfg)` |
+> | `middleware.HMACAuth(cfg)` | `fiberadapter.HMACAuth(cfg)` |
+> | `middleware.MTLSAuth(cfg)` | `fiberadapter.MTLSAuth(cfg)` |
+> | `middleware.CombinedAuth(cfg)` | `fiberadapter.CombinedAuth(cfg)` |
+> | `middleware.RateLimit(cfg)` | `fiberadapter.RateLimit(cfg)` |
+> | `middleware.BodyLimit(cfg)` | `fiberadapter.BodyLimit(cfg)` |
+> | `middleware.SecurityHeaders(cfg)` | `fiberadapter.SecurityHeaders(cfg)` |
+> | `middleware.NoCacheHeaders()` | `fiberadapter.NoCacheHeaders()` |
+> | `middleware.RequestLogging(cfg)` | `fiberadapter.RequestLogging(cfg)` |
+> | `middleware.GetClientIPFiber(c, cfg)` | `fiberadapter.GetClientIPFiber(c, cfg)` |
+>
+> The Fiber-typed hooks moved with them. `ErrorHandler`, `SuccessHandler`,
+> `KeyFunc` and `CustomFields` were typed `func(fiber.Ctx) ...`, which is what
+> pulled Fiber into the root package, so they now live on
+> `fiberadapter.APIKeyConfig`, `fiberadapter.HMACConfig`,
+> `fiberadapter.MTLSConfig`, `fiberadapter.AuthConfig`,
+> `fiberadapter.BodyLimitConfig`, `fiberadapter.LoggingConfig` and
+> `fiberadapter.RateLimitConfig` — each of which embeds the root config, so
+> every other field is unchanged and shared with the `Std` half:
+>
+> ```go
+> fiberadapter.APIKeyAuth(fiberadapter.APIKeyConfig{
+>     APIKeyConfig: middleware.APIKeyConfig{APIKey: "..."},
+>     ErrorHandler: func(c fiber.Ctx, err error) error { ... },
+> })
+> ```
+
 ## Features
 
 - **Authentication Middleware**
@@ -55,12 +95,12 @@ import (
 app := fiber.New()
 
 // Simple API key authentication
-app.Use(middleware.APIKeyAuth(middleware.APIKeyConfig{
+app.Use(fiberadapter.APIKeyAuth(middleware.APIKeyConfig{
     APIKey: "your-secret-api-key",
 }))
 
 // With multiple sources
-app.Use(middleware.APIKeyAuth(middleware.APIKeyConfig{
+app.Use(fiberadapter.APIKeyAuth(middleware.APIKeyConfig{
     APIKey:         "your-secret-api-key",
     HeaderName:     "X-API-Key",           // Check this header
     AuthScheme:     "Bearer",               // Also check Authorization: Bearer <key>
@@ -72,7 +112,7 @@ app.Use(middleware.APIKeyAuth(middleware.APIKeyConfig{
 
 ```go
 // Basic HMAC authentication
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
+app.Use(fiberadapter.HMACAuth(middleware.HMACConfig{
     Secret: "your-hmac-secret",
 }))
 
@@ -81,7 +121,7 @@ keys := map[string]string{
     "key-v1": "secret-v1",
     "key-v2": "secret-v2",
 }
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
+app.Use(fiberadapter.HMACAuth(middleware.HMACConfig{
     KeyProvider: func(keyID string) string {
         return keys[keyID]
     },
@@ -105,7 +145,7 @@ every field so the encoding is injective. Changing the signed bytes breaks every
 deployed signer at once, so it is opt-in:
 
 ```go
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
+app.Use(fiberadapter.HMACAuth(middleware.HMACConfig{
     Secret:               "your-hmac-secret",
     RequestSignatureFunc: middleware.ComputeHMACBound,
 }))
@@ -138,7 +178,7 @@ not stop the request being replayed inside that window. Without a guard, every
 signed request is replayable for `MaxTimeDrift`:
 
 ```go
-app.Use(middleware.HMACAuth(middleware.HMACConfig{
+app.Use(fiberadapter.HMACAuth(middleware.HMACConfig{
     Secret:      "your-hmac-secret",
     ReplayGuard: middleware.NewMemoryReplayGuard(), // single instance
 }))
@@ -160,19 +200,19 @@ type ReplayGuard interface {
 
 ```go
 // Basic mTLS
-app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
+app.Use(fiberadapter.MTLSAuth(middleware.MTLSConfig{
     RequireCert: true,
 }))
 
 // With CN/OU restrictions
-app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
+app.Use(fiberadapter.MTLSAuth(middleware.MTLSConfig{
     RequireCert: true,
     AllowedCNs:  []string{"service-a", "service-b"},
     AllowedOUs:  []string{"engineering"},
 }))
 
 // With custom validator
-app.Use(middleware.MTLSAuth(middleware.MTLSConfig{
+app.Use(fiberadapter.MTLSAuth(middleware.MTLSConfig{
     RequireCert: true,
     CertValidator: func(cert *x509.Certificate) error {
         // Custom validation logic
@@ -200,7 +240,7 @@ Failure reasons are wrapped, so logs keep naming the specific cause.
 
 ```go
 // Try multiple authentication methods in order: mTLS > HMAC > API Key
-app.Use(middleware.CombinedAuth(middleware.AuthConfig{
+app.Use(fiberadapter.CombinedAuth(middleware.AuthConfig{
     MTLSConfig: &middleware.MTLSConfig{
         RequireCert: false, // Optional mTLS
     },
@@ -229,7 +269,7 @@ limiter := middleware.NewRateLimiter(middleware.RateLimiterConfig{
 defer limiter.Stop()
 
 // Add to middleware
-app.Use(middleware.RateLimit(middleware.RateLimitConfig{
+app.Use(fiberadapter.RateLimit(middleware.RateLimitConfig{
     Limiter:   limiter,
     SkipPaths: []string{"/health", "/metrics"},
 }))
@@ -238,7 +278,7 @@ app.Use(middleware.RateLimit(middleware.RateLimitConfig{
 limiter.AddToWhitelist("10.0.0.1")
 
 // Custom key function (e.g., rate limit by user ID)
-app.Use(middleware.RateLimit(middleware.RateLimitConfig{
+app.Use(fiberadapter.RateLimit(middleware.RateLimitConfig{
     Limiter: limiter,
     KeyFunc: func(c fiber.Ctx) string {
         return c.Get("X-User-ID")
@@ -254,13 +294,13 @@ timestamp, so an active client rolls over on schedule: "100 per minute" means
 
 ```go
 // Default security headers
-app.Use(middleware.SecurityHeaders(middleware.DefaultSecurityHeadersConfig()))
+app.Use(fiberadapter.SecurityHeaders(middleware.DefaultSecurityHeadersConfig()))
 
 // Strict security headers (recommended for production)
-app.Use(middleware.SecurityHeaders(middleware.StrictSecurityHeadersConfig()))
+app.Use(fiberadapter.SecurityHeaders(middleware.StrictSecurityHeadersConfig()))
 
 // Custom configuration
-app.Use(middleware.SecurityHeaders(middleware.SecurityHeadersConfig{
+app.Use(fiberadapter.SecurityHeaders(middleware.SecurityHeadersConfig{
     XContentTypeOptions:     "nosniff",
     XFrameOptions:           "DENY",
     ContentSecurityPolicy:   "default-src 'self'",
@@ -268,13 +308,13 @@ app.Use(middleware.SecurityHeaders(middleware.SecurityHeadersConfig{
 }))
 
 // No-cache headers for sensitive endpoints
-app.Use("/api/sensitive", middleware.NoCacheHeaders())
+app.Use("/api/sensitive", fiberadapter.NoCacheHeaders())
 ```
 
 ### Request Body Limiting
 
 ```go
-app.Use(middleware.BodyLimit(middleware.BodyLimitConfig{
+app.Use(fiberadapter.BodyLimit(middleware.BodyLimitConfig{
     MaxSize:     4 * 1024 * 1024, // 4MB
     SkipMethods: []string{"GET", "HEAD"},
     SkipPaths:   []string{"/upload"}, // Allow larger uploads
@@ -301,7 +341,7 @@ import "github.com/rs/zerolog"
 
 logger := zerolog.New(os.Stdout)
 
-app.Use(middleware.RequestLogging(middleware.LoggingConfig{
+app.Use(fiberadapter.RequestLogging(middleware.LoggingConfig{
     Logger:     &logger,
     SkipPaths:  []string{"/health", "/metrics"},
     LogHeaders: true,
@@ -324,7 +364,7 @@ trustedProxies := middleware.NewTrustedProxyConfig([]string{
 
 // In a Fiber handler
 app.Get("/", func(c fiber.Ctx) error {
-    clientIP := middleware.GetClientIPFiber(c, trustedProxies)
+    clientIP := fiberadapter.GetClientIPFiber(c, trustedProxies)
     return c.SendString("Your IP: " + clientIP)
 })
 

@@ -7,16 +7,20 @@ import (
 	"fmt"
 )
 
-// certAllowLists holds the precomputed allow-lists of an MTLSConfig so the
+// CertAllowLists holds the precomputed allow-lists of an MTLSConfig so the
 // per-request path does not rebuild them.
-type certAllowLists struct {
+// CertAllowLists holds the CN/OU/SAN allow lists in lookup form.
+// Exported for framework adapters.
+type CertAllowLists struct {
 	cns  map[string]bool
 	ous  map[string]bool
 	sans map[string]bool
 }
 
-func newCertAllowLists(cfg MTLSConfig) certAllowLists {
-	l := certAllowLists{
+// NewCertAllowLists builds the lookup sets AuthenticateMTLS matches against.
+// Exported for framework adapters.
+func NewCertAllowLists(cfg MTLSConfig) CertAllowLists {
+	l := CertAllowLists{
 		cns:  make(map[string]bool, len(cfg.AllowedCNs)),
 		ous:  make(map[string]bool, len(cfg.AllowedOUs)),
 		sans: make(map[string]bool, len(cfg.AllowedDNSSANs)),
@@ -39,7 +43,7 @@ type errNoClientCertificate struct{ error }
 
 func (e errNoClientCertificate) Unwrap() error { return e.error }
 
-// certificateAbsent reports whether err says the client presented no
+// CertificateAbsent reports whether err says the client presented no
 // certificate at all -- the one condition RequireCert=false is meant to wave
 // through.
 //
@@ -48,7 +52,7 @@ func (e errNoClientCertificate) Unwrap() error { return e.error }
 // sentinel made a certificate which explicitly FAILED validation read as an
 // absent one, so the request was let through whenever RequireCert was false.
 // This type is unexported, so only the presence check above can produce it.
-func certificateAbsent(err error) bool {
+func CertificateAbsent(err error) bool {
 	var absent errNoClientCertificate
 	return errors.As(err, &absent)
 }
@@ -78,7 +82,7 @@ func verifiedPeerCertificate(state *tls.ConnectionState) (*x509.Certificate, err
 
 // checkCertificate applies the configured Subject/SAN allow-lists and the
 // custom validator to an already verified certificate.
-func (l certAllowLists) checkCertificate(cert *x509.Certificate, cfg MTLSConfig) error {
+func (l CertAllowLists) checkCertificate(cert *x509.Certificate, cfg MTLSConfig) error {
 	if len(l.cns) > 0 && !l.cns[cert.Subject.CommonName] {
 		return fmt.Errorf("%w: CN not allowed: %q", ErrMTLSCertificateInvalid, cert.Subject.CommonName)
 	}
@@ -118,12 +122,18 @@ func (l certAllowLists) checkCertificate(cert *x509.Certificate, cfg MTLSConfig)
 	return nil
 }
 
-// authenticateMTLS runs the complete mTLS check for a connection state: the
+// AuthenticateMTLS runs the complete mTLS check for a connection state: the
 // certificate must be verified by the TLS layer AND satisfy every restriction
 // in cfg. This is the single entry point used by MTLSAuth, MTLSAuthStd and
 // CombinedAuth, so the combined middleware can no longer accept a certificate
 // that the dedicated middleware would reject.
-func authenticateMTLS(state *tls.ConnectionState, cfg MTLSConfig, lists certAllowLists) (*x509.Certificate, error) {
+// AuthenticateMTLS verifies a request's client certificate against cfg: chain
+// presence, then the CN, OU and SAN allow lists.
+//
+// Exported so a framework adapter runs the same verification the net/http
+// middleware does. Two copies of a certificate check is how one framework ends
+// up accepting what the other rejects.
+func AuthenticateMTLS(state *tls.ConnectionState, cfg MTLSConfig, lists CertAllowLists) (*x509.Certificate, error) {
 	cert, err := verifiedPeerCertificate(state)
 	if err != nil {
 		return nil, err
