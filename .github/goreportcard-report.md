@@ -1,11 +1,11 @@
 # Go Report Card
 
-**Grade: A+** (99.1%)
+**Grade: B** (76.5%)
 
 | Metric | Value |
 | ------ | ----- |
 | Files | 50 |
-| Issues | 4 |
+| Issues | 0 |
 
 ## Checks
 
@@ -13,23 +13,12 @@
 | ----- | ----- |
 | gofmt | 100% |
 | go_vet | 100% |
-| gocyclo | 92% |
-| ineffassign | 100% |
+| ineffassign | 0% |
+| gocyclo | 0% |
 | license | 100% |
-| misspell | 100% |
+| misspell | 0% |
 
-## Issues
-
-### gocyclo
-
-- `fiberadapter/logging.go`
-  - Line 16: cyclomatic complexity 20 for function RequestLogging
-- `fiberadapter/auth.go`
-  - Line 18: cyclomatic complexity 30 for function CombinedAuth
-- `hmac.go`
-  - Line 114: cyclomatic complexity 27 for function HMACAuthStd
-- `fiberadapter/hmac.go`
-  - Line 18: cyclomatic complexity 27 for function HMACAuth
+No issues found. Nice work!
 
 ---
 
