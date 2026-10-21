@@ -79,7 +79,9 @@ func serveApp(t *testing.T, app *fiber.App, state *tls.ConnectionState) (*http.C
 		if err := app.Shutdown(); err != nil {
 			t.Errorf("shutdown: %v", err)
 		}
-		<-done
+		if err := <-done; err != nil {
+			t.Errorf("listener exited with error: %v", err)
+		}
 	})
 
 	addr := ln.Addr().String()
