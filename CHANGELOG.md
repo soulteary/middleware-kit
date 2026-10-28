@@ -14,6 +14,21 @@ than enumerate every commit.
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-10-28
+
+### Changed
+
+- Refresh dependencies used by the Fiber adapter: `github.com/gofiber/schema`
+  v1.9.1, `github.com/gofiber/utils/v2` v2.6.3,
+  `github.com/molecule-man/go-brrr` v1.3.1, `github.com/philhofer/fwd` v1.2.1,
+  `github.com/valyala/fasthttp` v1.77.0, and `golang.org/x/net` v0.62.0.
+- Align the English and Chinese minimum-Go documentation with the existing
+  `go 1.27.3` requirement. The minimum Go version and public API are unchanged
+  from v3.0.2.
+- Update the Go report Actions and their CLI inputs to go-test-report v1.1.3
+  and goreportcard v1.1.4, preserving the existing quality thresholds and
+  macOS source-build behavior.
+
 ## [3.0.0]
 
 ### Changed (breaking)
