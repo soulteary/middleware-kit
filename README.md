@@ -604,7 +604,7 @@ and HMAC items before upgrading a live deployment.
 
 ## Requirements
 
-- **Go 1.27.2+** (`go.mod` declares `go 1.27.2`)
+- **Go 1.27.3+** (`go.mod` declares `go 1.27.3`)
 - github.com/gofiber/fiber/v3 v3.5.0+ (for the `fiberadapter` subpackage only)
 - github.com/rs/zerolog v1.35.0+ (for logging)
 
