@@ -565,7 +565,7 @@ middleware-kit/
 
 ## 依赖要求
 
-- **Go 1.27.2+**（`go.mod` 声明 `go 1.27.2`）
+- **Go 1.27.3+**（`go.mod` 声明 `go 1.27.3`）
 - github.com/gofiber/fiber/v3 v3.5.0+（仅 `fiberadapter` 子包需要）
 - github.com/rs/zerolog v1.35.0+（日志）
 
