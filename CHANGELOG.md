@@ -14,6 +14,17 @@ than enumerate every commit.
 
 ## [Unreleased]
 
+## [3.0.4] — 2026-11-01
+
+### Changed
+
+- Update the Fiber adapter's runtime-transitive `gofiber/schema` dependency
+  from 1.9.1 to 1.9.2.
+- Update test-only `go.yaml.in/yaml/v3` from 3.0.5 to 3.0.6.
+- Verify the existing complete Go Report Card remains at 100% with no issues;
+  the correct generated report is unchanged.
+- Keep Go 1.27.3, the `/v3` module path, and the public API unchanged.
+
 ## [3.0.3] - 2026-10-28
 
 ### Changed
@@ -200,7 +211,8 @@ see that entry for the contents.
   security headers, request logging, compression and body limiting, for both
   Fiber and net/http.
 
-[Unreleased]: https://github.com/soulteary/middleware-kit/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/soulteary/middleware-kit/compare/v3.0.4...HEAD
+[3.0.4]: https://github.com/soulteary/middleware-kit/compare/v3.0.3...v3.0.4
 [3.0.0]: https://github.com/soulteary/middleware-kit/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/soulteary/middleware-kit/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/soulteary/middleware-kit/compare/v2.0.0...v2.1.0
