@@ -30,6 +30,10 @@ than enumerate every commit.
   `MaxVisitors` and every further new key repeated the sort. An eviction pass
   now frees a tenth of the table.
 
+### Changed
+
+- Require Go 1.27.4, which fixes GO-2026-6859 in `net/http`.
+
 The module path and the public API are unchanged.
 
 ## [3.0.4] — 2026-11-01
