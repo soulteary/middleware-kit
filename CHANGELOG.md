@@ -14,6 +14,28 @@ than enumerate every commit.
 
 ## [Unreleased]
 
+## [3.0.5] - 2026-11-13
+
+### Fixed
+
+- `CompressStd`: a handler that called `WriteHeader` before `Write` received a
+  gzip-compressed body without `Content-Encoding: gzip`, because the status
+  line was forwarded before the compression decision. The status is now sent
+  together with the final headers. Responses of at least `MinSize` bytes were
+  affected; clients such as Go's `net/http` could not decode them.
+- `CompressStd` no longer compresses a response that already has a
+  `Content-Encoding`, or one with a 204 or 304 status.
+- `RateLimiter`: when the visitor table was full, each new key sorted the whole
+  table under the lock and evicted nothing, so the table stayed one entry over
+  `MaxVisitors` and every further new key repeated the sort. An eviction pass
+  now frees a tenth of the table.
+
+### Changed
+
+- Require Go 1.27.4, which fixes GO-2026-6859 in `net/http`.
+
+The module path and the public API are unchanged.
+
 ## [3.0.4] — 2026-11-01
 
 ### Changed

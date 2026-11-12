@@ -57,6 +57,9 @@ type gzipWriter struct {
 	buffer       []byte
 	headerSent   bool
 	shouldGzip   bool
+	// status is the code passed to WriteHeader before the compression decision
+	// was made. It is forwarded by flush, after Content-Encoding is settled.
+	status int
 }
 
 func (gw *gzipWriter) Write(b []byte) (int, error) {
@@ -93,13 +96,22 @@ func (gw *gzipWriter) flush() {
 		contentType = strings.TrimSpace(contentType[:idx])
 	}
 
-	// Decide if we should gzip
+	// Decide if we should gzip. A response that already carries a
+	// Content-Encoding, or whose status forbids a body, is passed through.
 	gw.shouldGzip = len(gw.buffer) >= gw.minSize &&
-		(len(gw.contentTypes) == 0 || gw.contentTypes[contentType])
+		(len(gw.contentTypes) == 0 || gw.contentTypes[contentType]) &&
+		gw.Header().Get("Content-Encoding") == "" &&
+		bodyAllowedForStatus(gw.status)
 
 	if gw.shouldGzip && gw.writer != nil {
 		gw.Header().Set("Content-Encoding", "gzip")
 		gw.Header().Del("Content-Length") // Content length changes with compression
+	}
+
+	// The status line and headers go out together, so the status recorded by
+	// WriteHeader is forwarded only now that Content-Encoding is final.
+	if gw.status != 0 {
+		gw.ResponseWriter.WriteHeader(gw.status)
 	}
 
 	// Write buffered data
@@ -112,17 +124,49 @@ func (gw *gzipWriter) flush() {
 	}
 }
 
+// WriteHeader records the status instead of sending it. Handlers commonly call
+// WriteHeader before Write; forwarding the call immediately would commit the
+// headers before the body size is known, and a later decision to compress
+// could no longer add Content-Encoding, leaving a gzip body the client cannot
+// identify.
 func (gw *gzipWriter) WriteHeader(statusCode int) {
-	// Flush any buffered data first
-	if !gw.headerSent && len(gw.buffer) > 0 {
+	if gw.headerSent {
+		gw.ResponseWriter.WriteHeader(statusCode)
+		return
+	}
+	// Informational responses are not the final response; pass them through.
+	if statusCode >= 100 && statusCode < 200 {
+		gw.ResponseWriter.WriteHeader(statusCode)
+		return
+	}
+	// The first call wins, as with net/http.
+	if gw.status == 0 {
+		gw.status = statusCode
+	}
+	// No body can follow these, so there is nothing to wait for.
+	if !bodyAllowedForStatus(statusCode) {
 		gw.flush()
 	}
-	gw.ResponseWriter.WriteHeader(statusCode)
+}
+
+// bodyAllowedForStatus mirrors net/http: 1xx, 204 and 304 carry no body. Zero
+// means WriteHeader was not called, which net/http treats as 200.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status <= 199:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
 }
 
 func (gw *gzipWriter) Close() error {
-	// Flush any remaining buffered data
-	if !gw.headerSent && len(gw.buffer) > 0 {
+	// Flush any remaining buffered data, or a status that was recorded for a
+	// response without a body.
+	if !gw.headerSent && (len(gw.buffer) > 0 || gw.status != 0) {
 		gw.flush()
 	}
 	if gw.shouldGzip && gw.writer != nil {

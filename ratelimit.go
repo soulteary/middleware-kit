@@ -184,8 +184,23 @@ func (rl *RateLimiter) cleanupVisitors() {
 	}
 }
 
-// cleanupOldestVisitors removes the oldest visitor entries when over limit.
+// evictionHeadroomDivisor sets how much room one eviction pass frees: a tenth
+// of the table. Evicting a single entry would leave the table full, so every
+// further new key would pay for another pass while holding the lock.
+const evictionHeadroomDivisor = 10
+
+// cleanupOldestVisitors removes the least recently seen entries when the table
+// is full, leaving headroom so the next new keys do not each trigger a pass.
 func (rl *RateLimiter) cleanupOldestVisitors() {
+	headroom := rl.maxVisitors / evictionHeadroomDivisor
+	if headroom < 1 {
+		headroom = 1
+	}
+	toRemove := len(rl.visitors) - rl.maxVisitors + headroom
+	if toRemove <= 0 {
+		return
+	}
+
 	type visitorWithTime struct {
 		ip       string
 		lastSeen time.Time
@@ -200,7 +215,6 @@ func (rl *RateLimiter) cleanupOldestVisitors() {
 		return visitors[i].lastSeen.Before(visitors[j].lastSeen)
 	})
 
-	toRemove := len(rl.visitors) - rl.maxVisitors
 	for i := 0; i < toRemove && i < len(visitors); i++ {
 		delete(rl.visitors, visitors[i].ip)
 	}
