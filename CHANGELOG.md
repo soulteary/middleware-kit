@@ -14,6 +14,15 @@ than enumerate every commit.
 
 ## [Unreleased]
 
+## [3.0.6] - 2026-11-13
+
+### Changed
+
+- Update `github.com/gofiber/fiber/v3` from v3.6.1 to v3.7.0. An application
+  that selects this release is moved to Fiber v3.7.0 or later.
+
+The module path and the public API are unchanged.
+
 ## [3.0.5] - 2026-11-13
 
 ### Fixed
