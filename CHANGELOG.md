@@ -16,6 +16,14 @@ than enumerate every commit.
 
 ## [3.0.8] - 2026-11-26
 
+### Fixed
+
+- Copy Fiber rate-limit keys before retaining them in the shared limiter.
+  Reused request-header buffers can no longer change an existing visitor key,
+  lose rate-limit history, or make distinct users share a quota.
+- Add a deterministic regression covering header-buffer reuse and a stable
+  caller sharing the same limiter.
+
 ### Changed
 
 - Update the indirect Fiber adapter dependency `github.com/gofiber/schema`

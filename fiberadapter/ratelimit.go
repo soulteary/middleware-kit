@@ -1,6 +1,8 @@
 package fiberadapter
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v3"
 	middleware "github.com/soulteary/middleware-kit/v3"
 )
@@ -34,6 +36,10 @@ func RateLimit(cfg RateLimitConfig) fiber.Handler {
 		} else {
 			key = GetClientIPFiber(c, cfg.TrustedProxyConfig)
 		}
+
+		// Fiber header strings can alias request buffers reused after this
+		// handler returns. The shared limiter retains keys across requests.
+		key = strings.Clone(key)
 
 		// Check rate limit
 		if !cfg.Limiter.Allow(key) {
